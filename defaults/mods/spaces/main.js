@@ -5,7 +5,8 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, checking, terminals, focused, home, notify } from "herdr";
+import { inspectArgs, parseSnapshot, findClients, attachArgv, switchArgs, newSessionArgs } from "./tmux.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -106,6 +107,112 @@ export default class Spaces extends View {
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // Refresh only when the refs could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
+    this.tmux = { sessions: [], clients: [] };
+    if (!checking()) {
+      const poll = cx => {
+        const win = window();
+        if (win?.visible && ["linux", "macos"].includes(win.platform) && Date.now() >= (this.tmuxRetry ?? 0)) this.refreshTmux(cx);
+      };
+      poll(cx);
+      cx.timer.every(1000, poll);
+    }
+  }
+
+  async tmuxSnapshot() {
+    const result = await exec(this.tmuxBinary, inspectArgs, { timeout: 2000 });
+    if (result.code !== 0 && !/no server running|error connecting to .*\(No such file or directory\)/.test(result.stderr)) {
+      throw new Error(result.stderr.trim() || "Could not list tmux sessions.");
+    }
+    return parseSnapshot(result.stdout);
+  }
+
+  refreshTmux(cx) {
+    if (this.refreshingTmux || this.tmuxBusy) return;
+    this.refreshingTmux = true;
+    cx.spawn(async cx => {
+      const before = JSON.stringify([this.tmuxBinary, this.tmux]);
+      try {
+        if (!this.tmuxBinary) {
+          const probe = await exec("/bin/sh", ["-c", "command -v tmux"], { timeout: 2000 });
+          if (probe.code === 0 && probe.stdout.trim().startsWith("/")) this.tmuxBinary = probe.stdout.trim();
+        }
+        if (this.tmuxBinary) this.tmux = await this.tmuxSnapshot();
+        else this.tmuxRetry = Date.now() + 15000;
+      } catch {
+        this.tmuxRetry = Date.now() + 15000;
+      } finally {
+        this.refreshingTmux = false;
+        if (before !== JSON.stringify([this.tmuxBinary, this.tmux])) cx.notify();
+      }
+    });
+  }
+
+  useTmux(cx, session) {
+    if (this.tmuxBusy || !this.tmuxBinary) return;
+    this.tmuxBusy = true;
+    cx.spawn(async cx => {
+      try {
+        this.tmux = await this.tmuxSnapshot();
+        const clients = findClients(this.tmux.clients, terminals(), panes());
+        const at = focused();
+        const client = clients.find(c => c.address === at?.terminal)
+          ?? clients.find(c => c.address === this.lastTmuxClient)
+          ?? clients.find(c => c.dedicated)
+          ?? clients[0];
+        // Give a new terminal time to appear in herdr-core's foreground snapshot.
+        if (!client && Date.now() < (this.tmuxStartingUntil ?? 0)) return;
+        if (session) {
+          session = this.tmux.sessions.find(s => s.id === session.id && s.socket === session.socket && s.server === session.server);
+          if (!session) throw new Error("That tmux session has ended.");
+        } else {
+          const current = spaces().find(s => s.active);
+          let folder = current?.machine ? home() : at?.cwd || current?.folder || home();
+          const activeSession = client?.address === at?.terminal
+            ? this.tmux.sessions.find(s => s.id === client?.session)
+            : null;
+          if (activeSession) {
+            const path = await exec(this.tmuxBinary, ["-u", "-S", activeSession.socket, "display-message", "-p", "-t", activeSession.id, "#{pane_current_path}"], { timeout: 2000 });
+            if (path.code === 0 && path.stdout.startsWith("/")) folder = path.stdout.replace(/\n$/, "");
+          }
+          const created = await exec(this.tmuxBinary, newSessionArgs(folder, this.tmux.sessions), { timeout: 4000 });
+          if (created.code !== 0) throw new Error(created.stderr.trim() || "Could not create a tmux session.");
+          [session] = parseSnapshot(created.stdout).sessions;
+          if (!session) throw new Error("tmux did not return the new session.");
+        }
+        if (client) {
+          if (client.session !== session.id) {
+            const changed = await exec(this.tmuxBinary, switchArgs(session, client), { timeout: 2000 });
+            if (changed.code !== 0) throw new Error(changed.stderr.trim() || "Could not switch tmux sessions.");
+          }
+          this.lastTmuxClient = client.address;
+          run("pane.focus", { pane: client.pane });
+        } else {
+          this.tmuxStartingUntil = Date.now() + 5000;
+          run("space.new", { name: "tmux", tab: "tmux", machine: "", folder: home(), argv: attachArgv(this.tmuxBinary, session) });
+        }
+        this.tmux = await this.tmuxSnapshot();
+      } catch (e) {
+        notify({ title: "tmux", body: String(e.message ?? e), level: "error" });
+      } finally {
+        this.tmuxBusy = false;
+        cx.notify();
+      }
+    });
+  }
+
+  tmuxRows(t, collapsed, selected) {
+    return this.tmux.sessions.map(session => {
+      const active = session.id === selected;
+      const row = h_flex().id(`tmux-session-${session.id}`).h(collapsed ? 26 : 30).gap(9).items_center().flex_none()
+        .rounded(7).cursor_pointer().text_color(t.foreground).tooltip(`${session.name} · tmux`)
+        .when(active, el => el.bg(t.selected))
+        .when(!active, el => el.hover(s => s.bg(t.hover)))
+        .on_click((_e, cx) => this.useTmux(cx, session));
+      return collapsed
+        ? railCell(row.w(RAIL_CELL).justify_center().text_color(t.ansi6).child(spaceAvatar(session.name)))
+        : row.px(8).child(svg("mods/workspace-chrome/terminal.svg").size(14).flex_none().text_color(t.ansi6))
+          .child(div().min_w(0).truncate().child(session.name));
+    });
   }
 
   checkNew(cx) {
@@ -352,8 +459,18 @@ export default class Spaces extends View {
 
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
-    const rows = this.ordered();
-    const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
+    const clients = this.tmux.clients.length ? findClients(this.tmux.clients, terminals(), panes()) : [];
+    const selected = clients.find(c => c.address === focused()?.terminal)?.session;
+    const tmuxRows = this.tmuxRows(t, collapsed, selected);
+    const tmuxAt = this.tmux.sessions.findIndex(s => s.id === selected);
+    // The dedicated client is represented by its tmux rows while attached.
+    // If the person adds their own tabs or panes, preserve access to the Space.
+    const rows = this.ordered().filter(({ w }) => w.tabs?.length !== 1 || w.tabs[0].panes !== 1
+      || !clients.some(c => c.dedicated && c.tab === w.tabs[0].id));
+    const draw = (r) => {
+      const display = selected && r.w.active ? { ...r, w: { ...r.w, active: false } } : r;
+      return collapsed ? this.compact(display, t) : this.row(display, t);
+    };
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
     // children, and machine headers, login notes and loading rows count too.
     this.activeAt = -1;
@@ -366,9 +483,9 @@ export default class Spaces extends View {
     };
     const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
     if (!remote.length) {
-      if (loading(null) && !rows.length) return [loadingRow(null)];
-      this.activeAt = rows.findIndex(r => r.w.active);
-      return rows.map(draw);
+      if (loading(null) && !rows.length && !tmuxRows.length) return [loadingRow(null)];
+      this.activeAt = tmuxAt >= 0 ? rows.length + tmuxAt : rows.findIndex(r => r.w.active);
+      return [...rows.map(draw), ...tmuxRows];
     }
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
@@ -425,9 +542,12 @@ export default class Spaces extends View {
             .text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover(s => s.bg(t.hover))
             .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(login); this.copiedLogin = login; cx.notify(); })
             .child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
-      const items = [cell(head), ...guidance, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : cell(empty)])];
+      const sessions = m ? [] : tmuxRows;
+      const children = mine.map(draw).concat(sessions);
+      const items = [cell(head), ...guidance, ...(folded ? [] : children.length ? children : [loading(m) ? loadingRow(m) : cell(empty)])];
       const first = folded ? -1 : mine.findIndex(r => r.w.active);
       if (first >= 0) this.activeAt = before + 1 + guidance.length + first;
+      if (!folded && !m && tmuxAt >= 0) this.activeAt = before + 1 + guidance.length + mine.length + tmuxAt;
       before += items.length;
       return items;
     });
@@ -562,8 +682,14 @@ export default class Spaces extends View {
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
         .when(!collapsed, el => el.child("Spaces"))
-        .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
-          .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
+        .child(h_flex().gap(2)
+          .when(Boolean(this.tmuxBinary) && !collapsed, el => el
+            .child(div().id("tmux-session-new").size(26).flex_none().flex().items_center().justify_center().rounded(6)
+              .tooltip(sp.find(s => s.active)?.machine ? "New local tmux session" : "New tmux session here")
+              .hover(s => s.bg(t.hover).text_color(t.foreground))
+              .on_click((_e, cx) => this.useTmux(cx)).child(svg("mods/workspace-chrome/terminal.svg").size(14))))
+          .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
+            .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
       .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
         .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })

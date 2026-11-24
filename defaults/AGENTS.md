@@ -969,6 +969,13 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   space's repo, branch, ahead/behind and uncommitted changes). Shipped mods
   are Herdr's; duplicate with `mod.clone` before editing.
 
+- On macOS and Linux the Spaces sidebar also shows existing sessions from the
+  local default tmux server. A click reuses a tmux client in a Herdr pane or
+  opens one, and the selection follows that client's session. The terminal
+  icon beside Spaces creates a session in the current local folder. Use the
+  tab bar's `+` → Open folder to start an ordinary local shell in a chosen
+  folder. Windows and panes inside a tmux session are managed by tmux.
+
 ### Terminal link handlers
 
 In `mod.json`, declare what the mod can open:
