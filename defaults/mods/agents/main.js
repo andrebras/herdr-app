@@ -48,13 +48,17 @@ function leadPanes(all) {
   return leads;
 }
 
-function title(tab, l) {
+function liveTitle(l) {
   const prog = l?.program?.name;
   const live = clean(l?.title);
   // clean() would strip a path's leading ~ or /: test the title with only its status glyph gone.
   const path = /^[~/]|^[A-Za-z]:\\/.test((l?.title ?? "").replace(/^[^\p{L}\p{N}~/]+/u, ""));
   const telling = live && live !== (l?.terminal ?? l?.address) && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
-  return (tab.name === prog || !tab.named) && telling ? live : tab.name;
+  return telling ? live : null;
+}
+
+function title(tab, l) {
+  return ((tab.name === l?.program?.name || !tab.named) && liveTitle(l)) || tab.name;
 }
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
@@ -201,6 +205,8 @@ export default class Agents extends View {
   detectedModel(agent, selected, contexts = new Map(), tmuxCanFocus = true) {
     const [imageName, tint] = detectedIcons.get(agent.name) ?? ["agent", true];
     const tmux = agent.tmux;
+    const program = { icon: `icons/${imageName}.svg`, tint, name: agent.name };
+    const tmuxTitle = tmux?.titles?.map(title => liveTitle({ title, program })).find(Boolean);
     const pinKey = tmux?.start ? JSON.stringify([tmux.server, tmux.start, tmux.pane, agent.name]) : null;
     const context = contexts.get(agent.pane);
     const address = `detected-agent-${agent.pid}`;
@@ -210,9 +216,10 @@ export default class Agents extends View {
       group: tmux ? `tmux-${tmux.server}-${tmux.session}` : context?.space ?? "local-external",
       groupName: tmux?.label ?? context?.name ?? "This computer",
       spaceName: tmux?.label ?? context?.name ?? agent.name,
-      title: tmux?.detail || agent.name,
-      detail: tmux?.detail || (context ? agent.name : agent.tty),
-      program: { icon: `icons/${imageName}.svg`, tint, name: agent.name },
+      title: tmuxTitle || agent.name,
+      detail: tmux ? tmuxTitle : context ? agent.name : agent.tty,
+      location: tmux?.position,
+      program,
       status: "unknown", rank: 0, since: null, children: [],
       pinned: tmux ? this.tmuxPins.has(pinKey) : Boolean(agent.pinned),
       pin: pinKey ? pinned => this.pinTmux(pinKey, pinned)
@@ -519,7 +526,7 @@ export default class Agents extends View {
       const subs = a.children;
       const pic = icon(a.program, 16, t.foreground);
       const more = a.detail;
-      const tooltip = [a.program?.name, a.spaceName, more, a.status === "unknown" ? "Status unavailable" : null].filter(Boolean).join(" · ");
+      const tooltip = [a.program?.name, a.spaceName, more, a.location, a.status === "unknown" ? "Status unavailable" : null].filter(Boolean).join(" · ");
       if (collapsed) {
         return h_flex()
           .id(a.rowId)
@@ -539,7 +546,7 @@ export default class Agents extends View {
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
       const when = a.since;
-      const idle = a.status === "idle" && !a.focused;
+      const muted = (a.status === "idle" || a.status === "unknown") && !a.focused;
       const isPinned = a.pinned;
       const pin = div()
         .id(`pin-${a.address}`)
@@ -587,7 +594,7 @@ export default class Agents extends View {
             cx.notify();
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
-          .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
+          .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(muted ? t.muted : t.foreground).child(name))
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
         .when(Boolean(a.machine), el => el.child(div().text_size(10).text_color(t.dim).child(a.machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))

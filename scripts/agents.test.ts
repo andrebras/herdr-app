@@ -110,6 +110,8 @@ function element() {
       if (method === "id") node.id = args[0];
       if (method === "on_click") (node as any).click = args[0];
       if (method === "bg") (node as any).bg = args[0];
+      if (method === "tooltip") (node as any).tooltip = args[0];
+      if (method === "text_color") (node as any).color = args[0];
       if (method === "child") node.children.push(args[0]?.node ?? args[0]);
       if (method === "children") node.children.push(...args[0].map((child: any) => child?.node ?? child));
       if (method === "when" && args[0]) args[1](el);
@@ -369,9 +371,9 @@ test("links detected processes to the current tmux session and identifies the se
   expect(selected).toEqual({ server: "900", session: "$2", pane: "%4", window: "@3" });
   expect(focusedTmux(parseTmuxClients(output), terminals, "remote/t1")).toBeNull();
   const found = detectedAgents(processes, parseTmuxPanes(output), terminals, [], [{ address: "t2" }], selected);
-  expect(found.map(agent => [agent.pid, agent.name, agent.tmux?.label, agent.tmux?.detail, agent.tty])).toEqual([
-    [20, "Codex", "linked", "Review · 2.1", "pts/0"],
-    [30, "Claude Code", undefined, undefined, "s003"],
+  expect(found.map(agent => [agent.pid, agent.name, agent.tmux?.label, agent.tmux?.titles, agent.tmux?.position, agent.tty])).toEqual([
+    [20, "Codex", "linked", ["Review"], "2.1", "pts/0"],
+    [30, "Claude Code", undefined, undefined, undefined, "s003"],
   ]);
 });
 
@@ -382,7 +384,7 @@ test("tmux navigation targets the exact pane, and external rows open details", (
     openOverlay: (overlay: unknown) => overlays.push(overlay),
     div: element, h_flex: element, svg: element, image: element,
   });
-  const target = { server: "900", session: "$2", window: "@3", pane: "%4", label: "dataforge", detail: "Review · 2.1" };
+  const target = { server: "900", session: "$2", window: "@3", pane: "%4", label: "dataforge", titles: ["Review"], position: "2.1" };
   agents.navigation = [{ address: "t1", navigate: () => writes.push(["agent.focus", { terminal: "t1" }]) },
     agents.detectedModel({ pid: 20, name: "Codex", tmux: target }, null)];
   agents.navigate("next-agent");
@@ -466,8 +468,9 @@ test("headless processes disappear and tracked interactive agents are deduped by
   const terminal = [{ address: "t1", foreground: { pid: 10 }, status: "idle" }];
   const found = detectedAgents(ps, parseTmuxPanes(snapshot), terminal, [], [{ address: "t1" }]);
   expect(found.map(a => a.pid)).toEqual([11]);
-  expect(found[0].tmux?.detail).toBe("1.1");
-  expect(parseTmuxPanes(snapshot).get(10)?.[0].detail).toBe("Review queue · 1.0");
+  expect(found[0].tmux?.titles).toEqual([]);
+  expect(found[0].tmux?.position).toBe("1.1");
+  expect(parseTmuxPanes(snapshot).get(10)?.[0].titles).toEqual(["Review queue"]);
 });
 
 test("pinning a detected agent persists the pane target across view reloads", () => {
@@ -497,11 +500,11 @@ test("tracked and tmux agents share selection, row activation, and the same pin 
     focused: () => ({ terminal: pane.terminal, pane: pane.pane }),
     spaces: () => [{ id: "s1", name: "Project", tabs: [{ id: "tab1", name: "Review", named: true }] }],
     layout: () => ({ id: "sidebar", size: { px: 268 }, content: { mod: "spaces" } }), shared: () => null,
-    theme: () => ({ selected: "#selected" }), setAgentOrder() {},
+    theme: () => ({ selected: "#selected", muted: "#muted", foreground: "#foreground" }), setAgentOrder() {},
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
   });
   agents.processes = parseProcesses("64 61 s010 claude   claude\n61 1 s010 zsh       zsh");
-  agents.tmuxPanes = parseTmuxPanes("900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\tClaude Code\t99");
+  agents.tmuxPanes = parseTmuxPanes("900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\t✻ Review\t99");
   agents.tmuxClients = parseTmuxClients("client\t55\t900\t$0\t%4\t@1");
   const find = (id: string) => {
     const walk = (node: any): any => node?.id === id ? node : node?.children?.map(walk).find(Boolean);
@@ -509,6 +512,9 @@ test("tracked and tmux agents share selection, row activation, and the same pin 
   };
   expect(find("ag-t1").bg).toBe("#selected");
   expect(find("detected-agent-64").bg).toBeUndefined();
+  const nameColor = (node: any): string | undefined => node?.children?.includes("Project")
+    ? node.color : node?.children?.map(nameColor).find(Boolean);
+  expect(nameColor(find("detected-agent-64"))).toBe("#muted");
   find("ag-t1").click();
   agents.hovered = "t1";
   find("pin-t1").click(null, { stop_propagation() {}, notify() {} });
@@ -516,7 +522,12 @@ test("tracked and tmux agents share selection, row activation, and the same pin 
   stock.focused = false;
   pane = { terminal: "tmux", pane: "p2", tab: "tab1" };
   expect(find("detected-agent-64").bg).toBe("#selected");
-  expect(textOf(find("detected-agent-64"))).toContain("Project · Review · 1.0");
+  const detectedRow = find("detected-agent-64");
+  expect(nameColor(detectedRow)).toBe("#foreground");
+  expect(nameColor(find("ag-t1"))).toBe("#muted");
+  expect(textOf(find("ag-t1")).trim()).toStartWith("Project · Review");
+  expect(textOf(detectedRow).trim()).toBe("Project · Review –");
+  expect(detectedRow.tooltip).toBe("Claude Code · Project · Review · 1.0 · Status unavailable");
   find("detected-agent-64").click();
   agents.hovered = "detected-agent-64";
   find("pin-detected-agent-64").click(null, { stop_propagation() {}, notify() {} });

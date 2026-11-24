@@ -55,10 +55,10 @@ export function parseTmuxPanes(stdout) {
       || !/^%\d+$/.test(pane) || !/^\d+$/.test(root) || dead !== "0" || !label) continue;
     const pid = Number(root);
     const position = /^\d+$/.test(windowIndex) && /^\d+$/.test(paneIndex) ? windowIndex + "." + paneIndex : pane;
-    const title = [paneTitle, windowName].map(value => value?.replace(/[\x00-\x1f\x7f]/g, "").trim())
-      .find(value => value && !/^(?:v?\d+(?:\.\d+)+|claude(?: code)?|codex|zsh|bash|sh|[\w.-]+\.local)$/i.test(value));
+    const titles = [paneTitle, windowName].map(value => value?.replace(/[\x00-\x1f\x7f]/g, "").trim())
+      .filter(value => value && !/^(?:v?\d+(?:\.\d+)+|claude(?: code)?|codex|zsh|bash|sh|[\w.-]+\.local)$/i.test(value));
     const value = { server, session, window, pane, label, start: /^\d+$/.test(start) ? start : null,
-      detail: title ? `${title} · ${position}` : position };
+      titles, position };
     const matches = panes.get(pid) ?? [];
     matches.push(value);
     panes.set(pid, matches);
