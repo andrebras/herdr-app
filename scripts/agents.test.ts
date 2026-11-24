@@ -1,16 +1,19 @@
 import { test, expect } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents } from "../defaults/mods/agents/discovery.js";
+import { macTerminalDevice, revealTerminalArgs } from "../defaults/mods/agents/external.js";
 
 const source = (await readFile(new URL("../defaults/mods/agents/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "").replace("export default class Agents", "class Agents");
 
-function harness(pins: string[], globals: Record<string, unknown> = {}) {
+function harness(pins: string[], overrides: Record<string, unknown> = {}) {
+  const globals = { focusedTmux, detectedAgents, macTerminalDevice, revealTerminalArgs, ...overrides };
   const data = new Map([["pins", JSON.stringify(pins)]]);
   const writes: unknown[] = [];
   const storage = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => data.set(k, v), removeItem: (k: string) => data.delete(k) };
-  const Agents = new Function("View", "localStorage", "props", "run", ...Object.keys(globals), `${source}; return Agents;`)(
+  const Agents = new Function("View", "localStorage", "props", "run", "checking", ...Object.keys(globals), `${source}; return Agents;`)(
     class {}, storage, () => ({}), (...args: unknown[]) => writes.push(args),
-    ...Object.values(globals),
+    () => true, ...Object.values(globals),
   );
   const agents = new Agents();
   agents.init({}, { timer: { every() {} } });
@@ -343,4 +346,57 @@ test("a title's leading emoji stays, a status glyph before it goes", () => {
   // An emoji is a name a person chose: alone, or beside the program's name, it is the row's name.
   expect(row("🔴")).toBe("🔴");
   expect(row("🔴 claude")).toBe("🔴 claude");
+});
+
+test("links detected processes to the current tmux session and identifies the selected pane", () => {
+  const processes = parseProcesses([
+    "10 1 pts/0 zsh        /bin/zsh",
+    "20 10 pts/0 node      node /opt/bin/codex",
+    "21 20 pts/0 codex     /opt/bin/codex",
+    "30 1 s003 claude      claude --resume",
+    "31 1 ?? claude        claude",
+    "32 1 ?? bash          bash -c echo claude",
+  ].join("\n"));
+  const output = [
+    "900\t$0\t@3\t%4\t10\t0\tdataforge\t1\t0\tReview",
+    "900\t$2\t@3\t%4\t10\t0\tlinked\t2\t1\tReview",
+    "900\t$2\t@8\t%9\t30\t1\tdead\t3\t0\tDead",
+    "client\t55\t900\t$2\t%4",
+  ].join("\n");
+  const terminals = [{ address: "t1", pid: 54, foreground: { pid: 55 } }, { address: "t2", pid: 31, status: "idle" }];
+  const selected = focusedTmux(parseTmuxClients(output), terminals, "t1");
+  expect(selected).toEqual({ server: "900", session: "$2", pane: "%4" });
+  expect(focusedTmux(parseTmuxClients(output), terminals, "remote/t1")).toBeNull();
+  const found = detectedAgents(processes, parseTmuxPanes(output), terminals, [], [{ address: "t2" }], selected);
+  expect(found.map(agent => [agent.pid, agent.name, agent.tmux?.label, agent.tmux?.detail, agent.tty])).toEqual([
+    [20, "Codex", "linked", "2.1 · Review", "pts/0"],
+    [30, "Claude Code", undefined, undefined, "s003"],
+  ]);
+});
+
+test("tmux rows highlight and target the exact pane, and external rows open details", () => {
+  const overlays: any[] = [];
+  const { agents, writes } = harness([], {
+    layout: () => ({ content: { mod: "spaces" } }),
+    openOverlay: (overlay: unknown) => overlays.push(overlay),
+    div: element, h_flex: element, svg: element, image: element,
+  });
+  const t = { selected: "#selected" };
+  const target = { server: "900", session: "$2", window: "@3", pane: "%4", label: "dataforge", detail: "2.1 · Review" };
+  const native = agents.detectedRow(t, { pid: 20, name: "Codex", tmux: target }, false, target).node;
+  expect(native.bg).toBe(t.selected);
+  expect(textOf(native)).toContain("dataforge 2.1 · Review");
+  native.click();
+  expect(writes).toEqual([["spaces.open-tmux-agent-900-2-3-4"]]);
+  const external = agents.detectedRow(t, { pid: 30, name: "Claude Code", tty: "s003" }, false).node;
+  external.click();
+  expect(overlays[0].props.agentDetails).toEqual({ pid: 30, name: "Claude Code", location: "This computer", tty: "s003", tmux: false });
+});
+
+test("revealing a Mac terminal uses a validated terminal device argument", () => {
+  expect(macTerminalDevice("s003")).toBe("/dev/ttys003");
+  expect(macTerminalDevice("/dev/ttys003")).toBe("/dev/ttys003");
+  expect(revealTerminalArgs("terminal", "??")).toBeNull();
+  expect(revealTerminalArgs("terminal", "s003; whoami")).toBeNull();
+  expect(revealTerminalArgs("iterm", "s003")?.at(-1)).toBe("/dev/ttys003");
 });

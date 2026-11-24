@@ -26,7 +26,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
     if (method === "child" && typeof args[0] === "string") labels.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "checking", `${source}; return Spaces;`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -41,10 +41,11 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
       moves.push(args);
     },
     ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
-    ScrollHandle, theme, () => env.layout, () => {},
+    ScrollHandle, theme, () => env.layout, () => {}, () => true,
   );
   const view = new Spaces();
   view.reconnecting = {};
+  view.tmux = { sessions: [], clients: [] };
   view.folded = new Set(["cloud"]);
   view.refreshMachines = () => {};
   const cx = { timer: { every() {} }, notify() {}, spawn(fn: (cx: unknown) => Promise<unknown>) { tasks.push(fn(cx)); } };
@@ -592,4 +593,22 @@ test("space rows keep the full label and omit matching git details after an emoj
   expect(rowLabels("🐼 Herdr-App")).toEqual(["🐼", "🐼 Herdr-App", "topic", "↑2"]);
   expect(rowLabels("✌🏻 topic")).toEqual(["✌🏻", "✌🏻 topic", "herdr-app", "↑2"]);
   expect(rowLabels("🐼 topic", "└─")).toEqual(["🐼 topic", "↑2"]);
+});
+
+test("tmux sessions share a collapsible heading and the active index follows the visible row", () => {
+  const { view, labels, handlers, cx, storage } = harness();
+  view.tmux.sessions = [{ id: "$1", name: "dataforge" }, { id: "$2", name: "revolution" }];
+  const expanded = view.tmuxGroup({}, false, "$2");
+  expect(expanded.rows).toHaveLength(3);
+  expect(expanded.activeAt).toBe(2);
+  expect(labels).toEqual(["tmux", "dataforge", "revolution"]);
+  view.tmux.sessions = [{ id: "$1", name: "dataforge" }];
+  view.tmuxFolded = true;
+  labels.length = 0;
+  const collapsed = view.tmuxGroup({}, false, "$1");
+  expect(collapsed.rows).toHaveLength(1);
+  expect(collapsed.activeAt).toBe(0);
+  expect(labels).toEqual(["tmux"]);
+  handlers.on_click(null, cx);
+  expect(storage.get("tmux.folded")).toBe("false");
 });

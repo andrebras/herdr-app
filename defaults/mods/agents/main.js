@@ -3,7 +3,8 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, exec } from "herdr";
-import { psArgs, tmuxPaneArgs, parseProcesses, parseTmuxPanes, detectedAgents } from "./discovery.js";
+import { psArgs, tmuxPaneArgs, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents } from "./discovery.js";
+import { macTerminalDevice, revealTerminalArgs } from "./external.js";
 
 function layoutHasMod(node, mod) {
   return node && !node.hidden && (node.content?.mod === mod || (node.children ?? []).some(child => layoutHasMod(child, mod)));
@@ -86,9 +87,15 @@ function icon(p, size, color) {
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 
+const detectedIcons = new Map([
+  ["Claude Code", ["claude", false]], ["Codex", ["codex", false]], ["OpenCode", ["opencode", true]],
+  ["Gemini CLI", ["gemini", true]], ["Amp", ["amp", false]], ["Cursor Agent", ["cursor", true]],
+  ["Copilot CLI", ["copilot", true]], ["Pi", ["pi", true]],
+]);
+
 export default class Agents extends View {
   init(_props, cx) {
-    if (props()?.sortMenu) return;
+    if (props()?.sortMenu || props()?.agentDetails) return;
     this.folded = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
     try { this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}"); } catch { this.changed = {}; }
@@ -99,6 +106,8 @@ export default class Agents extends View {
     this.migratingPins = new Set();
     this.processes = new Map();
     this.tmuxPanes = new Map();
+    this.tmuxClients = new Map();
+    this.nextProcessScan = 0;
     cx.timer.every(30000, (cx) => cx.notify());
     if (!checking()) {
       const poll = cx => {
@@ -106,7 +115,7 @@ export default class Agents extends View {
         if (win?.visible && ["linux", "macos"].includes(win.platform)) this.discover(cx);
       };
       poll(cx);
-      cx.timer.every(4000, poll);
+      cx.timer.every(1500, poll);
     }
   }
 
@@ -115,17 +124,25 @@ export default class Agents extends View {
     this.discovering = true;
     cx.spawn(async cx => {
       try {
+        const now = Date.now();
+        const scan = now >= this.nextProcessScan;
         const [ps, tmux] = await Promise.allSettled([
-          exec("/bin/ps", psArgs, { timeout: 2500 }),
+          scan ? exec("/bin/ps", psArgs, { timeout: 2500 }) : null,
           exec("tmux", tmuxPaneArgs, { timeout: 2000 }),
         ]);
-        if (ps.status !== "fulfilled" || ps.value.code !== 0) return;
-        const processes = parseProcesses(ps.value.stdout);
-        const tmuxPanes = parseTmuxPanes(tmux.status === "fulfilled" && tmux.value.code === 0 ? tmux.value.stdout : "");
-        const found = detectedAgents(processes, tmuxPanes, terminals(), panes(), agents());
-        const key = JSON.stringify(found);
-        this.processes = processes;
+        if (scan) {
+          this.nextProcessScan = now + 4500;
+          if (ps.status === "fulfilled" && ps.value?.code === 0) this.processes = parseProcesses(ps.value.stdout);
+        }
+        const tmuxOutput = tmux.status === "fulfilled" && tmux.value.code === 0 ? tmux.value.stdout : "";
+        const tmuxPanes = parseTmuxPanes(tmuxOutput);
+        const tmuxClients = parseTmuxClients(tmuxOutput);
+        const all = terminals();
+        const active = focusedTmux(tmuxClients, all, focused()?.terminal);
+        const found = detectedAgents(this.processes, tmuxPanes, all, panes(), agents(), active);
+        const key = JSON.stringify([found, active]);
         this.tmuxPanes = tmuxPanes;
+        this.tmuxClients = tmuxClients;
         if (key !== this.discoveryKey) {
           this.discoveryKey = key;
           cx.notify();
@@ -136,24 +153,82 @@ export default class Agents extends View {
     });
   }
 
-  detectedRow(t, agent, collapsed) {
+  detectedRow(t, agent, collapsed, active, focusedPane) {
     const { tmux, pane } = agent;
     const location = tmux?.label || (pane ? "Herdr" : "This computer");
     const spacesMod = props()?.tmuxSpacesMod ?? "spaces";
-    const jump = tmux ? layoutHasMod(layout(), spacesMod) : Boolean(pane);
-    return h_flex().id(`detected-agent-${agent.pid}`).h(29).px(collapsed ? 0 : 8)
-      .gap(7).flex_none().items_center().rounded(7).text_color(t.muted)
-      .tooltip(`${agent.name} · ${location} · Status unavailable`)
-      .when(jump, el => el.cursor_pointer().hover(s => s.bg(t.hover)).on_click(() => {
-        if (tmux) {
+    const selected = tmux
+      ? active?.server === tmux.server && active?.session === tmux.session && active?.pane === tmux.pane
+      : Boolean(pane && pane === focusedPane);
+    const [imageName, tint] = detectedIcons.get(agent.name) ?? ["agent", true];
+    const details = tmux?.detail || agent.tty || `PID ${agent.pid}`;
+    return h_flex().id(`detected-agent-${agent.pid}`).h(collapsed ? 26 : 30).px(collapsed ? 0 : 8)
+      .gap(9).flex_none().items_center().rounded(8).text_color(selected ? t.foreground : t.muted)
+      .tooltip(`${agent.name} · ${location} · ${details} · Status unavailable`)
+      .when(selected, el => el.bg(t.selected))
+      .cursor_pointer().hover(s => s.bg(t.hover)).on_click(() => {
+        if (tmux && layoutHasMod(layout(), spacesMod)) {
           const suffix = [tmux.server, tmux.session.slice(1), tmux.window.slice(1), tmux.pane.slice(1)].join("-");
           run(`${spacesMod}.open-tmux-agent-${suffix}`);
-        } else run("pane.focus", { pane });
-      }))
+        } else if (!tmux && pane) {
+          run("pane.focus", { pane });
+        } else {
+          openOverlay({ mod: props()?.selfMod ?? "agents", kind: "dialog", width: 365, height: 220,
+            props: { agentDetails: { name: agent.name, location, pid: agent.pid, tty: agent.tty, tmux: Boolean(tmux) } } });
+        }
+      })
       .when(collapsed, el => el.justify_center())
-      .child(svg("mods/workspace-chrome/terminal.svg").size(13).flex_none().text_color(t.dim))
-      .when(!collapsed, el => el.child(div().flex_1().min_w(0).truncate().child(agent.name))
-        .child(div().max_w(115).min_w(0).truncate().text_size(11).text_color(t.dim).child(location)));
+      .child(icon({ icon: `icons/${imageName}.svg`, tint }, 16, t.foreground))
+      .when(!collapsed, el => el.child(div().flex_1().min_w(0).truncate().child(tmux ? location : agent.name))
+        .child(div().max_w(125).min_w(0).truncate().text_size(11).text_color(t.dim).child(details)));
+  }
+
+  reveal(agent, app, cx) {
+    if (this.revealing) return;
+    const args = revealTerminalArgs(app, agent.tty);
+    if (!args) return;
+    this.revealing = true;
+    this.revealMessage = "Looking for the matching terminal…";
+    cx.notify();
+    cx.spawn(async cx => {
+      try {
+        const ps = await exec("/bin/ps", ["-p", String(agent.pid), "-o", "tty="], { timeout: 2000 });
+        if (ps.code !== 0 || macTerminalDevice(ps.stdout.trim()) !== macTerminalDevice(agent.tty)) {
+          this.revealMessage = "The agent has exited or changed terminals.";
+        } else {
+          const result = await exec("/usr/bin/osascript", args, { timeout: 30000 });
+          if (result.code === 0 && result.stdout.trim() === "revealed") {
+            closeOverlay(props().overlay);
+            return;
+          }
+          this.revealMessage = result.code === 0
+            ? "No matching tab in that app."
+            : "macOS could not switch to that terminal. Check Automation permissions if prompted.";
+        }
+      } catch {
+        this.revealMessage = "Could not open the terminal.";
+      } finally {
+        this.revealing = false;
+        cx.notify();
+      }
+    });
+  }
+
+  agentDetails(t, agent) {
+    const button = (id, text, action) => div().id(id).px(9).py(6).rounded(6).bg(t.raised)
+      .cursor_pointer().hover(el => el.bg(t.hover)).on_click(action).child(text);
+    const reveal = !agent.tmux && window()?.platform === "macos" && Boolean(macTerminalDevice(agent.tty));
+    const help = reveal ? "Open the app that owns this terminal."
+      : agent.tty ? "Herdr has no pane to open for this agent." : "This process has no interactive terminal.";
+    return v_flex().size_full().p(16).gap(9).text_color(t.foreground)
+      .child(div().text_size(15).font_semibold().child(agent.name))
+      .child(div().text_size(12).text_color(t.muted).child(`${agent.location} · PID ${agent.pid}${agent.tty ? " · " + agent.tty : ""}`))
+      .child(div().text_size(12).text_color(t.dim).child(this.revealMessage || help))
+      .child(div().flex_1())
+      .child(h_flex().gap(8)
+        .when(reveal, el => el.child(button("reveal-terminal", "Open in Terminal", (_e, cx) => this.reveal(agent, "terminal", cx)))
+          .child(button("reveal-iterm", "Open in iTerm2", (_e, cx) => this.reveal(agent, "iterm", cx))))
+        .child(button("agent-details-close", "Close", () => closeOverlay(props().overlay))));
   }
 
   // Stamps agents whose state changed. Done and idle count as one: looking at a
@@ -283,14 +358,18 @@ export default class Agents extends View {
   render(cx) {
     const t = theme();
     if (props()?.sortMenu) return this.sortMenu(t);
+    if (props()?.agentDetails) return this.agentDetails(t, props().agentDetails);
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
-    const detected = detectedAgents(this.processes, this.tmuxPanes, all, panes(), list);
+    const allPanes = panes();
+    const current = focused();
+    const tmuxActive = focusedTmux(this.tmuxClients, all, current?.terminal);
+    const detected = detectedAgents(this.processes, this.tmuxPanes, all, allPanes, list, tmuxActive);
     this.migratePins(all);
-    const shown = focused()?.agent;
+    const shown = current?.agent;
     const now = Date.now();
     this.track(list, now);
     // A kept sub-agent (one with a pane) is in agents() too: where a tree shows
@@ -347,7 +426,7 @@ export default class Agents extends View {
     // agent's own title, never an automatic tab number unless two rows would
     // otherwise read the same.
     // Read the pane snapshot once: every host read copies the whole list into JS.
-    const leads = leadPanes(panes());
+    const leads = leadPanes(allPanes);
     const tabs = new Map(spaces().flatMap(s => s.tabs).map(tab => [tab.id, tab]));
     const labels = new Map(list.map(a => {
       const tab = tabs.get(a.tab);
@@ -483,7 +562,7 @@ export default class Agents extends View {
     if (detected.length) {
       const group = { id: "detected-agents", label: "Detected", status: null, members: detected };
       if (!collapsed) rows.push(header(group));
-      if (collapsed || !this.folded.has(group.id)) rows.push(...detected.map(a => this.detectedRow(t, a, collapsed)));
+      if (collapsed || !this.folded.has(group.id)) rows.push(...detected.map(a => this.detectedRow(t, a, collapsed, tmuxActive, current?.pane)));
     }
 
     return v_flex()
@@ -510,7 +589,7 @@ export default class Agents extends View {
                 .text_size(11)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
-                .on_click(() => openOverlay({ mod: "agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
+                .on_click(() => openOverlay({ mod: props()?.selfMod ?? "agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
                 .tooltip(`Sort agents: ${sort.label}`)
                 .child(svg(`mods/workspace-chrome/${sort.icon}.svg`).size(14)),
             ),

@@ -969,17 +969,18 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   space's repo, branch, ahead/behind and uncommitted changes). Shipped mods
   are Herdr's; duplicate with `mod.clone` before editing.
 
-- On macOS and Linux the Spaces sidebar also shows existing sessions from the
-  local default tmux server. A click reuses a tmux client in a Herdr pane or
-  opens one, and the selection follows that client's session. The terminal
+- On macOS and Linux the Spaces sidebar groups existing sessions from the
+  local default tmux server under a collapsible tmux heading. A click reuses
+  a tmux client in a Herdr pane or opens one. Selection follows that client's session. The terminal
   icon beside Spaces creates a session in the current local folder. Use the
   tab bar's `+` → Open folder to start an ordinary local shell in a chosen
   folder. Windows and panes inside a tmux session are managed by tmux.
 
 - The Agents sidebar on macOS and Linux lists recognised local agent processes
-  under Detected when their status is unavailable. A row for a tmux agent goes
-  to its pane on the local default server. Herdr also shows recognised agents
-  running in other terminal apps when it can identify their processes.
+  under Detected when their status is unavailable. A row shows the tmux session,
+  window and pane position and follows the selected pane. External rows open
+  process details and can reveal matching Terminal or iTerm2 tabs on macOS
+  when Automation is available. The footer counts agents reporting status.
 
 ### Terminal link handlers
 
