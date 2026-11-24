@@ -597,8 +597,7 @@ thread_local! {
     static SNAPSHOT: RefCell<Snapshot> = RefCell::new(Snapshot::default());
     static PANE_VIEWS: RefCell<HashMap<String, gpui::WeakEntity<crate::terminal::TerminalView>>> = RefCell::new(HashMap::new());
     static AGENT_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// Copies that asked for navigation, as (copy, row count), latest last.
-    static AGENT_NAVIGATORS: RefCell<Vec<(u64, u64)>> = const { RefCell::new(Vec::new()) };
+    static AGENT_NAVIGATOR: Cell<Option<(u64, u64)>> = const { Cell::new(None) };
     static SHARED: RefCell<Option<SharedStore>> = const { RefCell::new(None) };
     /// Where key commands for each loaded copy go: (copy, mod, sender).
     static COMMANDS: RefCell<Vec<(u64, String, async_channel::Sender<String>)>> = const { RefCell::new(Vec::new()) };
@@ -823,10 +822,10 @@ pub enum AgentStep {
 /// A visible agent list can handle navigation when it also has external targets.
 /// The native terminal order is the fallback when that list is not shown.
 pub fn navigate_agent(step: AgentStep) -> Option<bool> {
-    // The latest shown copy wins, so hiding one copy hands keys to another shown one.
-    let (copy, count) = AGENT_NAVIGATORS.with_borrow(|navigators| {
-        SHOWN_COPIES.with_borrow(|shown| navigators.iter().rev().find(|(copy, _)| shown.contains(copy)).copied())
-    })?;
+    let (copy, count) = AGENT_NAVIGATOR.get()?;
+    if !SHOWN_COPIES.with_borrow(|shown| shown.contains(&copy)) {
+        return None;
+    }
     let command = match step {
         AgentStep::Next => "next-agent".to_owned(),
         AgentStep::Previous => "previous-agent".to_owned(),
@@ -1308,12 +1307,12 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         .function("panes", reader(reads.clone(), "panes", |s| &s.panes))
         .function("setAgentOrder", move |a| {
             AGENT_ORDER.with(|s| *s.borrow_mut() = strings(a.get(0)));
-            let count = a.get(1).and_then(HostValue::as_number).filter(|n| *n >= 1.0 && n.is_finite() && n.fract() == 0.0);
-            let live: Vec<u64> = COMMANDS.with_borrow(|ports| ports.iter().filter(|(_, _, tx)| !tx.is_closed()).map(|(id, _, _)| *id).collect());
-            AGENT_NAVIGATORS.with_borrow_mut(|navigators| {
-                navigators.retain(|(registered, _)| *registered != copy && live.contains(registered));
+            AGENT_NAVIGATOR.with(|slot| {
+                let count = a.get(1).and_then(HostValue::as_number).filter(|n| *n >= 1.0 && n.is_finite() && n.fract() == 0.0);
                 if let Some(count) = count {
-                    navigators.push((copy, count as u64));
+                    slot.set(Some((copy, count as u64)));
+                } else if slot.get().is_some_and(|(registered, _)| registered == copy) {
+                    slot.set(None);
                 }
             });
             Ok(HostValue::Null)
@@ -2082,7 +2081,7 @@ mod tests {
         let copy = 104;
         let (tx, rx) = async_channel::unbounded();
         COMMANDS.with_borrow_mut(|ports| ports.push((copy, "agents".into(), tx)));
-        AGENT_NAVIGATORS.set(vec![(copy, 2)]);
+        AGENT_NAVIGATOR.set(Some((copy, 2)));
         set_shown_copies(Default::default());
         assert_eq!(navigate_agent(AgentStep::Next), None);
         set_shown_copies([copy].into_iter().collect());
@@ -2092,29 +2091,9 @@ mod tests {
         assert_eq!(rx.try_recv().unwrap(), "select-agent-2");
         assert_eq!(navigate_agent(AgentStep::Select(3)), Some(false));
         assert!(rx.try_recv().is_err());
-        AGENT_NAVIGATORS.set(Vec::new());
+        AGENT_NAVIGATOR.set(None);
         set_shown_copies(Default::default());
         COMMANDS.with_borrow_mut(|ports| ports.retain(|(id, _, _)| *id != copy));
-    }
-
-    #[test]
-    fn navigation_goes_to_the_latest_shown_agent_list() {
-        let (first, second) = (105, 106);
-        let (tx1, rx1) = async_channel::unbounded();
-        let (tx2, rx2) = async_channel::unbounded();
-        COMMANDS.with_borrow_mut(|ports| ports.extend([(first, "agents".into(), tx1), (second, "agents".into(), tx2)]));
-        AGENT_NAVIGATORS.set(vec![(first, 2), (second, 3)]);
-        set_shown_copies([first, second].into_iter().collect());
-        assert_eq!(navigate_agent(AgentStep::Next), Some(true));
-        assert_eq!(rx2.try_recv().unwrap(), "next-agent");
-        set_shown_copies([first].into_iter().collect());
-        assert_eq!(navigate_agent(AgentStep::Next), Some(true));
-        assert_eq!(rx1.try_recv().unwrap(), "next-agent");
-        assert_eq!(navigate_agent(AgentStep::Select(3)), Some(false));
-        set_shown_copies(Default::default());
-        assert_eq!(navigate_agent(AgentStep::Next), None);
-        AGENT_NAVIGATORS.set(Vec::new());
-        COMMANDS.with_borrow_mut(|ports| ports.retain(|(id, _, _)| *id != first && *id != second));
     }
 
     #[test]
