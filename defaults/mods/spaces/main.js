@@ -171,10 +171,7 @@ export default class Spaces extends View {
   resolveTmuxHost(workspaces, client) {
     const attached = client && workspaces.find(s => !s.machine && s.tabs?.some(tab => tab.id === client.tab));
     const remembered = workspaces.find(s => !s.machine && s.id === this.tmuxHost);
-    // Older versions created a Space literally named "tmux" and did not
-    // remember its ID after the last tmux tab closed. Only migrate one match.
-    const legacy = this.tmuxHost ? [] : workspaces.filter(s => !s.machine && s.name === "tmux");
-    const host = attached ?? remembered ?? (legacy.length === 1 ? legacy[0] : null);
+    const host = attached ?? remembered ?? null;
     if (host && host.id !== this.tmuxHost) {
       this.tmuxHost = host.id;
       localStorage.setItem("tmux.host", host.id);

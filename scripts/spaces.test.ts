@@ -686,11 +686,11 @@ test("a tmux server that stops answering drops its sessions", async () => {
   expect(h.view.tmux).toEqual({ sessions: [], clients: [] });
 });
 
-test("an update can recover the only legacy tmux Space after it detached", () => {
-  const host = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "shell", panes: 1 }] };
-  const h = scrollHarness([host]);
+test("a Space the person named tmux does not become the tmux host", () => {
+  const own = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "shell", panes: 1 }] };
+  const h = scrollHarness([own]);
   h.view.tmux.sessions = [{ id: "$1", name: "dataforge" }];
-  expect(h.view.grouped({}, false)).toHaveLength(2);
-  expect(h.storage.get("tmux.host")).toBe("work");
-  expect(h.ids).not.toContain("tmux-group");
+  h.view.grouped({}, false);
+  expect(h.storage.has("tmux.host")).toBe(false);
+  expect(h.ids).toContain("tmux-group");
 });
