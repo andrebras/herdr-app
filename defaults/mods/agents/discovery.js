@@ -2,7 +2,7 @@
 // CLI entrypoints and are never rendered or persisted.
 export const psArgs = ["-xww", "-o", "pid=", "-o", "ppid=", "-o", "tty=", "-o", "comm=", "-o", "args="];
 export const tmuxPaneArgs = ["-u", "-L", "default", "list-panes", "-a", "-F",
-  "#{pid}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{window_name}",
+  "#{pid}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{window_name}\t#{pane_title}\t#{start_time}",
   ";", "list-clients", "-F", "client\t#{client_pid}\t#{pid}\t#{session_id}\t#{pane_id}\t#{window_id}"];
 
 const names = new Map([
@@ -50,13 +50,15 @@ export function parseProcesses(stdout) {
 export function parseTmuxPanes(stdout) {
   const panes = new Map();
   for (const line of stdout.split("\n")) {
-    const [server, session, window, pane, root, dead, label, windowIndex, paneIndex, ...title] = line.split("\t");
+    const [server, session, window, pane, root, dead, label, windowIndex, paneIndex, windowName, paneTitle, start] = line.split("\t");
     if (!/^\d+$/.test(server) || !/^\$\d+$/.test(session) || !/^@\d+$/.test(window)
       || !/^%\d+$/.test(pane) || !/^\d+$/.test(root) || dead !== "0" || !label) continue;
     const pid = Number(root);
     const position = /^\d+$/.test(windowIndex) && /^\d+$/.test(paneIndex) ? windowIndex + "." + paneIndex : pane;
-    const windowName = title.join(" ").replace(/[\x00-\x1f\x7f]/g, "").trim();
-    const value = { server, session, window, pane, label, detail: windowName ? position + " · " + windowName : position };
+    const title = [paneTitle, windowName].map(value => value?.replace(/[\x00-\x1f\x7f]/g, "").trim())
+      .find(value => value && !/^(?:v?\d+(?:\.\d+)+|claude(?: code)?|codex|zsh|bash|sh|[\w.-]+\.local)$/i.test(value));
+    const value = { server, session, window, pane, label, start: /^\d+$/.test(start) ? start : null,
+      detail: title ? `${title} · ${position}` : position };
     const matches = panes.get(pid) ?? [];
     matches.push(value);
     panes.set(pid, matches);
@@ -120,7 +122,7 @@ export function detectedAgents(processes, tmuxPanes, terminals, herdrPanes, trac
   for (const terminal of terminals) {
     if (!terminal.address || terminal.address.includes("/")) continue;
     const owner = {
-      pane: shown.get(terminal.address),
+      pane: shown.get(terminal.address), address: terminal.address, pinned: Boolean(terminal.labels?.["herdr.pinned"]),
       tracked: existing.has(terminal.address) || Boolean(terminal.status),
       name: processes.get(terminal.foreground?.pid)?.name ?? processes.get(terminal.pid)?.name,
     };
@@ -130,16 +132,17 @@ export function detectedAgents(processes, tmuxPanes, terminals, herdrPanes, trac
 
   const result = [];
   for (const [pid, process] of processes) {
-    if (!process.name) continue;
+    if (!process.name || !process.tty) continue;
     let tmux = tmuxPanes.get(pid), owner = owned.get(pid), nested = false;
     for (const parent of ancestors(processes, pid)) {
       tmux ??= tmuxPanes.get(parent);
       owner ??= owned.get(parent);
       if (processes.get(parent)?.name === process.name) { nested = true; break; }
     }
-    if (!nested && (tmux || !owner?.tracked || (owner.name && owner.name !== process.name))) {
+    const alreadyTracked = owner?.tracked && (owner.name === process.name || (!tmux && !owner.name));
+    if (!nested && !alreadyTracked) {
       const target = tmux?.find(t => t.server === selected?.server && t.session === selected.session) ?? tmux?.[0];
-      result.push({ pid, name: process.name, tmux: target, pane: owner?.pane, tty: process.tty });
+      result.push({ pid, name: process.name, tmux: target, pane: owner?.pane, terminal: owner?.address, pinned: owner?.pinned, tty: process.tty });
     }
   }
   return result.sort((a, b) => Number(Boolean(b.tmux)) - Number(Boolean(a.tmux))

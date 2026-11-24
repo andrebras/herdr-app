@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { findClients, pickClient } from "../defaults/mods/spaces/tmux.js";
 const source = (await readFile(new URL("../defaults/mods/spaces/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "").replace("export default class Spaces", "class Spaces").replace(/^export /gm, "");
 
@@ -13,20 +14,22 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   const availability = [{ name: null as string | null, layout: "ready" }];
   const moves: { id: string; index: number }[] = [];
   const handlers: Record<string, (...args: any[]) => void> = {};
-  const env = { layout: null as unknown };
+  const env = { layout: null as unknown, focus: null as unknown, terminals: [] as unknown[], panes: [] as unknown[] };
   // The list's scroll position: the requests the view makes are what the sidebar would scroll by.
   const ScrollHandle = { new: () => ({ calls: [] as number[], scroll_to_item(index: number) { this.calls.push(index); } }) };
   const theme = () => new Proxy({}, { get: () => "#000000" });
   const tracked: unknown[] = [];
   const labels: string[] = [];
+  const ids: string[] = [];
   const element: any = new Proxy({}, { get: (_, method) => (...args: any[]) => {
     if (String(method).startsWith("on_")) handlers[String(method)] = args.at(-1);
     if (method === "track_scroll") tracked.push(args[0]);
     if (method === "when" && args[0]) args[1](element);
     if (method === "child" && typeof args[0] === "string") labels.push(args[0]);
+    if (method === "id") ids.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "checking", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "checking", "findClients", "pickClient", "focused", "terminals", `${source}; return Spaces;`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -35,13 +38,13 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
       return reply ?? { code: 0, stdout: "{}", stderr: "" };
     },
     { setItem(key: string, value: string) { storage.set(key, value); }, getItem(key: string) { return storage.get(key) ?? null; } },
-    () => snapshot, () => [],
+    () => snapshot, () => env.panes,
     (name: string, args: { id: string; index: number }) => {
       expect(name).toBe("space.move");
       moves.push(args);
     },
     ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
-    ScrollHandle, theme, () => env.layout, () => {}, () => true,
+    ScrollHandle, theme, () => env.layout, () => {}, () => true, findClients, pickClient, () => env.focus, () => env.terminals,
   );
   const view = new Spaces();
   view.reconnecting = {};
@@ -49,7 +52,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   view.folded = new Set(["cloud"]);
   view.refreshMachines = () => {};
   const cx = { timer: { every() {} }, notify() {}, spawn(fn: (cx: unknown) => Promise<unknown>) { tasks.push(fn(cx)); } };
-  return { view, calls, tasks, cx, storage, moves, handlers, snapshot, availability, env, tracked, labels };
+  return { view, calls, tasks, cx, storage, moves, handlers, snapshot, availability, env, tracked, labels, ids };
 }
 
 test("git grouping reads refs for normal, detached, unborn and bare worktrees", async () => {
@@ -611,4 +614,26 @@ test("tmux sessions share a collapsible heading and the active index follows the
   expect(labels).toEqual(["tmux"]);
   handlers.on_click(null, cx);
   expect(storage.get("tmux.folded")).toBe("false");
+});
+
+test("the existing Space owns the tmux tree even when its regular shell tab is selected", () => {
+  const host = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "mux", panes: 1 }, { id: "shell", panes: 1 }] };
+  const other = { id: "other", name: "Project", folder: "/project", active: false, tabs: [] };
+  const h = scrollHarness([host, other]);
+  h.view.tmux.sessions = [{ id: "$1", name: "dataforge" }, { id: "$2", name: "revolution" }];
+  h.view.tmux.clients = [{ session: "$2", pid: 10 }];
+  h.env.terminals = [{ address: "t1", pid: 10 }];
+  h.env.panes = [{ terminal: "t1", tab: "mux", pane: "p1" }];
+  h.env.focus = { space: "work", terminal: "t2" };
+  expect(h.view.grouped({}, false)).toHaveLength(4);
+  expect(h.ids).not.toContain("tmux-group");
+  expect(h.ids.filter(id => id === "space-work")).toHaveLength(1);
+  expect(h.ids).toContain("space-tmux-toggle-work");
+  expect(h.view.activeAt).toBe(0);
+  h.env.focus = { space: "work", terminal: "t1" };
+  h.view.grouped({}, false);
+  expect(h.view.activeAt).toBe(2);
+  h.view.tmuxFolded = true;
+  expect(h.view.grouped({}, false)).toHaveLength(2);
+  expect(h.view.activeAt).toBe(0);
 });

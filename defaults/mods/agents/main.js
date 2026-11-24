@@ -2,7 +2,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, exec } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, exec, nextCommand } from "herdr";
 import { psArgs, tmuxPaneArgs, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
 import { macTerminalDevice, revealTerminalArgs } from "./external.js";
 
@@ -104,6 +104,12 @@ export default class Agents extends View {
     if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
+    try {
+      const pins = JSON.parse(localStorage.getItem("tmux.pins") ?? "[]");
+      this.tmuxPins = new Set(Array.isArray(pins) ? pins.filter(pin => typeof pin === "string") : []);
+    } catch {
+      this.tmuxPins = new Set();
+    }
     this.scroll = ScrollHandle.new();
     this.processes = new Map();
     this.tmuxPanes = new Map();
@@ -117,7 +123,24 @@ export default class Agents extends View {
       };
       poll(cx);
       cx.timer.every(1500, poll);
+      cx.spawn(async () => {
+        for (;;) this.navigate(await nextCommand());
+      });
     }
+  }
+
+  navigate(command) {
+    const list = this.navigation ?? [];
+    if (!list.length) return;
+    const index = list.findIndex(a => a.address === this.navigationCurrent);
+    let target;
+    if (command === "next-agent") target = list[(index + 1) % list.length];
+    else if (command === "previous-agent") target = list[index < 0 ? list.length - 1 : (index + list.length - 1) % list.length];
+    else if (/^select-agent-[1-9]\d*$/.test(command)) target = list[Number(command.slice(13)) - 1];
+    if (!target) return;
+    this.navigationCurrent = target.address;
+    if (target.detected) this.focusDetected(target.detected);
+    else run("agent.focus", { terminal: target.address });
   }
 
   discover(cx) {
@@ -155,31 +178,42 @@ export default class Agents extends View {
     });
   }
 
-  detectedRow(t, agent, collapsed, selected) {
+  focusDetected(agent) {
     const { tmux, pane } = agent;
     const location = tmux?.label || (pane ? "Herdr" : "This computer");
     const spacesMod = props()?.tmuxSpacesMod ?? "spaces";
+    if (tmux && layoutHasMod(layout(), spacesMod)) {
+      const suffix = [tmux.server, tmux.session.slice(1), tmux.window.slice(1), tmux.pane.slice(1)].join("-");
+      run(`${spacesMod}.open-tmux-agent-${suffix}`);
+    } else if (!tmux && pane) {
+      run("pane.focus", { pane });
+    } else {
+      openOverlay({ mod: props()?.selfMod ?? "agents", kind: "dialog", width: 365, height: 220,
+        props: { agentDetails: { name: agent.name, location, pid: agent.pid, tty: agent.tty, tmux: Boolean(tmux) } } });
+    }
+  }
+
+  toggleAgentPin(agent) {
+    if (!agent.detected || !agent.detected.tmux) {
+      run("terminal.pin", { terminal: agent.detected?.terminal ?? agent.address, pinned: !agent.pinned });
+      return;
+    }
+    if (!agent.pinKey) return;
+    if (agent.pinned) this.tmuxPins.delete(agent.pinKey);
+    else this.tmuxPins.add(agent.pinKey);
+    localStorage.setItem("tmux.pins", JSON.stringify([...this.tmuxPins]));
+  }
+
+  detectedModel(agent, selected) {
     const [imageName, tint] = detectedIcons.get(agent.name) ?? ["agent", true];
-    const details = tmux?.detail || agent.tty || `PID ${agent.pid}`;
-    return h_flex().id(`detected-agent-${agent.pid}`).h(collapsed ? 26 : 30).px(collapsed ? 0 : 8)
-      .gap(9).flex_none().items_center().rounded(8).text_color(selected ? t.foreground : t.muted)
-      .tooltip(`${agent.name} · ${location} · ${details} · Status unavailable`)
-      .when(selected, el => el.bg(t.selected))
-      .cursor_pointer().hover(s => s.bg(t.hover)).on_click(() => {
-        if (tmux && layoutHasMod(layout(), spacesMod)) {
-          const suffix = [tmux.server, tmux.session.slice(1), tmux.window.slice(1), tmux.pane.slice(1)].join("-");
-          run(`${spacesMod}.open-tmux-agent-${suffix}`);
-        } else if (!tmux && pane) {
-          run("pane.focus", { pane });
-        } else {
-          openOverlay({ mod: props()?.selfMod ?? "agents", kind: "dialog", width: 365, height: 220,
-            props: { agentDetails: { name: agent.name, location, pid: agent.pid, tty: agent.tty, tmux: Boolean(tmux) } } });
-        }
-      })
-      .when(collapsed, el => el.justify_center())
-      .child(icon({ icon: `icons/${imageName}.svg`, tint }, 16, t.foreground))
-      .when(!collapsed, el => el.child(div().flex_1().min_w(0).truncate().child(tmux ? location : agent.name))
-        .child(div().max_w(125).min_w(0).truncate().text_size(11).text_color(t.dim).child(details)));
+    const tmux = agent.tmux;
+    const pinKey = tmux?.start ? JSON.stringify([tmux.server, tmux.start, tmux.pane, agent.name]) : null;
+    return {
+      address: `detected-agent-${agent.pid}`, detected: agent, focused: agent.pid === selected,
+      space_name: tmux?.label ?? agent.name, detail: tmux?.detail ?? agent.tty,
+      program: { icon: `icons/${imageName}.svg`, tint },
+      status: "unknown", pinKey, pinned: tmux ? this.tmuxPins.has(pinKey) : Boolean(agent.pinned),
+    };
   }
 
   reveal(agent, app, cx) {
@@ -368,6 +402,9 @@ export default class Agents extends View {
     const tmuxActive = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
     const detected = detectedAgents(this.processes, this.tmuxPanes, all, allPanes, list, tmuxActive);
     const selected = selectedDetectedAgent(detected, tmuxActive, current?.pane);
+    const detectedRows = detected.map(agent => this.detectedModel(agent, selected));
+    const detectedPinned = detectedRows.filter(a => a.pinned);
+    const detectedRest = detectedRows.filter(a => !a.pinned);
     this.migratePins(all);
     const shown = current?.agent;
     const now = Date.now();
@@ -387,11 +424,16 @@ export default class Agents extends View {
     const pinned = list.filter((a) => a.pinned);
     const rest = list.filter((a) => !a.pinned);
     list = [...pinned, ...rest];
-    setAgentOrder(list.map((a) => a.address));
+    const allRows = [...pinned, ...detectedPinned, ...rest, ...detectedRest];
+    const tmuxCanFocus = layoutHasMod(layout(), props()?.tmuxSpacesMod ?? "spaces");
+    this.navigation = allRows.filter(a => !a.detected || (a.detected.tmux ? tmuxCanFocus : Boolean(a.detected.pane)));
+    this.navigationCurrent = detectedRows.find(a => a.focused)?.address ?? list.find(a => a.focused)?.address ?? shown;
+    const navigationIndices = new Map(this.navigation.map((a, i) => [a.address, i + 1]));
+    setAgentOrder(list.map(a => a.address), this.navigation.some(a => a.detected) ? this.navigation.length : undefined);
 
-    const withKids = (a, i) => {
+    const withKids = (a) => {
       const subs = collapsed ? [] : this.tree(all, a.address);
-      const r = row(a, i, subs);
+      const r = row(a, subs);
       if (this.folded.has(a.address)) return [r];
       return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
     };
@@ -441,14 +483,18 @@ export default class Agents extends View {
       if (detail.get(a.address) == null && seen[`${a.space_name}\u0000`] > 1) detail.set(a.address, label(a));
     }
 
-    const row = (a, i, subs = []) => {
+    const row = (a, subs = []) => {
       const pic = icon(a.program, 16, t.foreground);
-      const more = detail.get(a.address);
+      const detected = a.detected;
+      const rowId = detected ? a.address : `ag-${a.address}`;
+      const more = detected ? a.detail : detail.get(a.address);
+      const activate = () => detected ? this.focusDetected(detected) : run("pane.focus", { pane: a.pane });
+      const tooltip = detected ? [detected.name, a.space_name, more, "Status unavailable"].filter(Boolean).join(" · ") : null;
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       if (collapsed) {
         return h_flex()
-          .id(`ag-${a.address}`)
+          .id(rowId)
           .h(26)
           .mx(6)
           .px(2)
@@ -458,13 +504,16 @@ export default class Agents extends View {
           .gap(4)
           .when(a.focused, (el) => el.bg(t.selected))
           .hover((s) => s.bg(t.hover))
-          .on_click(() => run("pane.focus", { pane: a.pane }))
-          .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(a.focused ? t.foreground : t.muted).child(String(i + 1)))
-          .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
+          .on_click(activate)
+          .when(Boolean(tooltip), el => el.tooltip(tooltip))
+          .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(a.focused ? t.foreground : t.muted)
+            .child(navigationIndices.has(a.address) ? String(navigationIndices.get(a.address)) : pic))
+          .when(!detected, el => el.child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true))));
       }
       const when = this.since(a);
       const idle = a.status === "idle" && !a.focused;
       const isPinned = a.pinned;
+      const canPin = !detected || Boolean(a.pinKey || (!detected.tmux && detected.terminal));
       const pin = div()
         .id(`pin-${a.address}`)
         .flex_none()
@@ -476,7 +525,7 @@ export default class Agents extends View {
         .tooltip(isPinned ? "Unpin" : "Pin to the top")
         .on_click((_e, cx) => {
           cx.stop_propagation();
-          run("terminal.pin", { terminal: a.address, pinned: !isPinned });
+          this.toggleAgentPin(a);
           // The row moves away from under the pointer, and no hover-out comes.
           this.hovered = null;
           cx.notify();
@@ -484,10 +533,10 @@ export default class Agents extends View {
         .child(svg(`mods/workspace-chrome/${isPinned ? "pin-off" : "pin"}.svg`).size(13));
       // Under a space header the space goes without saying; an automatic tab number says nothing.
       // Without a space header above (priority, pinned) the row names its space.
-      const full = byPriority || isPinned;
+      const full = Boolean(detected) || byPriority || isPinned;
       const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       return h_flex()
-        .id(`ag-${a.address}`)
+        .id(rowId)
         .px(8)
         .h(30)
         .flex_none()
@@ -502,7 +551,8 @@ export default class Agents extends View {
           else if (this.hovered === a.address) this.hovered = null;
           cx.notify();
         })
-        .on_click(() => run("pane.focus", { pane: a.pane }))
+        .on_click(activate)
+        .when(Boolean(tooltip), el => el.tooltip(tooltip))
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();
@@ -514,14 +564,15 @@ export default class Agents extends View {
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
-        .when(this.hovered === a.address, el => el.child(pin))
+        .when(canPin && this.hovered === a.address, el => el.child(pin))
         .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
-        .child(this.status(t, a, byPriority && !isPinned));
+        .when(!detected, el => el.child(this.status(t, a, byPriority && !isPinned)));
     };
 
     // Groups in list order: spaces (grouped) or priority sections. Agents of a
     // space are next to each other in agents(), so neighbours make a group.
-    const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
+    const groups = pinned.length || detectedPinned.length
+      ? [{ id: "pinned", label: "Pinned", status: null, members: [...pinned, ...detectedPinned] }] : [];
     for (const a of rest) {
       const r = rankOf(a) || RANK.idle;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
@@ -557,18 +608,23 @@ export default class Agents extends View {
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
-    const rows = collapsed
-      ? list.flatMap(withKids)
-      : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
     let selectedAt = -1;
-    if (detected.length) {
-      const group = { id: "detected-agents", label: "Detected", status: null, members: detected, selected: selected !== undefined };
-      const show = collapsed || !this.folded.has(group.id);
-      if (group.selected) selectedAt = show
-        ? rows.length + (collapsed ? 0 : 1) + detected.findIndex(a => a.pid === selected)
-        : rows.length;
-      if (!collapsed) rows.push(header(group));
-      if (show) rows.push(...detected.map(a => this.detectedRow(t, a, collapsed, a.pid === selected)));
+    if (detectedRest.length) groups.push({ id: "detected-agents", label: "Detected", status: null, members: detectedRest });
+    const rows = [];
+    const add = (a) => {
+      if (a.detected && a.focused) selectedAt = rows.length;
+      rows.push(...(a.detected ? [row(a)] : withKids(a)));
+    };
+    if (collapsed) {
+      allRows.forEach(add);
+    } else {
+      for (const group of groups) {
+        const folded = this.folded.has(group.id);
+        group.selected = group.members.some(a => a.detected && a.focused);
+        if (group.selected && folded) selectedAt = rows.length;
+        rows.push(header(group));
+        if (!folded) group.members.forEach(add);
+      }
     }
     if (selected !== this.selectedDetected || selectedAt !== this.selectedAt) {
       this.selectedDetected = selected;

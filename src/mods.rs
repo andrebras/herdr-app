@@ -597,6 +597,7 @@ thread_local! {
     static SNAPSHOT: RefCell<Snapshot> = RefCell::new(Snapshot::default());
     static PANE_VIEWS: RefCell<HashMap<String, gpui::WeakEntity<crate::terminal::TerminalView>>> = RefCell::new(HashMap::new());
     static AGENT_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static AGENT_NAVIGATOR: Cell<Option<(u64, u64)>> = const { Cell::new(None) };
     static SHARED: RefCell<Option<SharedStore>> = const { RefCell::new(None) };
     /// Where key commands for each loaded copy go: (copy, mod, sender).
     static COMMANDS: RefCell<Vec<(u64, String, async_channel::Sender<String>)>> = const { RefCell::new(Vec::new()) };
@@ -808,6 +809,20 @@ pub fn send_command_to(copy: u64, command: &str) -> bool {
         c.retain(|(_, _, tx)| !tx.is_closed());
         c.iter().any(|(id, _, tx)| *id == copy && tx.try_send(command.to_owned()).is_ok())
     })
+}
+
+/// A visible agent list can handle navigation when it also has external targets.
+/// The native terminal order is the fallback when that list is not shown.
+pub fn navigate_agent(command: &str, index: Option<u64>) -> Option<bool> {
+    let (copy, count) = AGENT_NAVIGATOR.get()?;
+    if !SHOWN_COPIES.with_borrow(|shown| shown.contains(&copy)) {
+        return None;
+    }
+    if index.is_some_and(|i| i > count) {
+        return Some(false);
+    }
+    let selection = index.map(|i| format!("select-agent-{i}"));
+    send_command_to(copy, selection.as_deref().unwrap_or(command)).then_some(true)
 }
 
 /// The copies on screen now (`prepare_load` numbers them).
@@ -1280,8 +1295,16 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         .function("machines", reader(reads.clone(), "machines", |s| &s.machines))
         .function("agents", reader(reads.clone(), "agents", |s| &s.agents))
         .function("panes", reader(reads.clone(), "panes", |s| &s.panes))
-        .function("setAgentOrder", |a| {
+        .function("setAgentOrder", move |a| {
             AGENT_ORDER.with(|s| *s.borrow_mut() = strings(a.get(0)));
+            AGENT_NAVIGATOR.with(|slot| {
+                let count = a.get(1).and_then(HostValue::as_number).filter(|n| *n >= 1.0 && n.is_finite() && n.fract() == 0.0);
+                if let Some(count) = count {
+                    slot.set(Some((copy, count as u64)));
+                } else if slot.get().is_some_and(|(registered, _)| registered == copy) {
+                    slot.set(None);
+                }
+            });
             Ok(HostValue::Null)
         })
         .function("setWindowTitle", |a| {
@@ -2041,6 +2064,26 @@ mod tests {
         AGENT_ORDER.with(|s| *s.borrow_mut() = vec!["t2".into(), "t1".into(), "t3".into()]);
         assert_eq!(agent_order(available()), vec!["t2", "t1", "t3"]);
         AGENT_ORDER.with(|s| s.borrow_mut().clear());
+    }
+
+    #[test]
+    fn interactive_navigation_reaches_only_the_visible_agent_list() {
+        let copy = 104;
+        let (tx, rx) = async_channel::unbounded();
+        COMMANDS.with_borrow_mut(|ports| ports.push((copy, "agents".into(), tx)));
+        AGENT_NAVIGATOR.set(Some((copy, 2)));
+        set_shown_copies(Default::default());
+        assert_eq!(navigate_agent("next-agent", None), None);
+        set_shown_copies([copy].into_iter().collect());
+        assert_eq!(navigate_agent("next-agent", None), Some(true));
+        assert_eq!(rx.try_recv().unwrap(), "next-agent");
+        assert_eq!(navigate_agent("", Some(2)), Some(true));
+        assert_eq!(rx.try_recv().unwrap(), "select-agent-2");
+        assert_eq!(navigate_agent("", Some(3)), Some(false));
+        assert!(rx.try_recv().is_err());
+        AGENT_NAVIGATOR.set(None);
+        set_shown_copies(Default::default());
+        COMMANDS.with_borrow_mut(|ports| ports.retain(|(id, _, _)| *id != copy));
     }
 
     #[test]

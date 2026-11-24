@@ -3549,6 +3549,9 @@ impl AppWindow {
                 self.focus_agent(&t);
             }
             "agent.next" | "agent.prev" => {
+                if person && mods::navigate_agent(if name == "agent.next" { "next-agent" } else { "previous-agent" }, None) == Some(true) {
+                    return;
+                }
                 let order = self.agent_order();
                 if order.is_empty() {
                     return;
@@ -3568,6 +3571,13 @@ impl AppWindow {
                 let Some(index) = a.get("index").and_then(Value::as_u64).and_then(|i| i.checked_sub(1)) else {
                     return self.fail("agent.select needs an index (1 = first)");
                 };
+                if person {
+                    match mods::navigate_agent("", Some(index + 1)) {
+                        Some(true) => return,
+                        Some(false) => return self.fail("no such agent"),
+                        None => {}
+                    }
+                }
                 let Some(addr) = usize::try_from(index).ok().and_then(|i| self.agent_order().into_iter().nth(i)) else {
                     return self.fail("no such agent");
                 };

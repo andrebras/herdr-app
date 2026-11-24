@@ -370,27 +370,25 @@ test("links detected processes to the current tmux session and identifies the se
   expect(focusedTmux(parseTmuxClients(output), terminals, "remote/t1")).toBeNull();
   const found = detectedAgents(processes, parseTmuxPanes(output), terminals, [], [{ address: "t2" }], selected);
   expect(found.map(agent => [agent.pid, agent.name, agent.tmux?.label, agent.tmux?.detail, agent.tty])).toEqual([
-    [20, "Codex", "linked", "2.1 · Review", "pts/0"],
+    [20, "Codex", "linked", "Review · 2.1", "pts/0"],
     [30, "Claude Code", undefined, undefined, "s003"],
   ]);
 });
 
-test("tmux rows highlight and target the exact pane, and external rows open details", () => {
+test("tmux navigation targets the exact pane, and external rows open details", () => {
   const overlays: any[] = [];
   const { agents, writes } = harness([], {
     layout: () => ({ content: { mod: "spaces" } }),
     openOverlay: (overlay: unknown) => overlays.push(overlay),
     div: element, h_flex: element, svg: element, image: element,
   });
-  const t = { selected: "#selected" };
-  const target = { server: "900", session: "$2", window: "@3", pane: "%4", label: "dataforge", detail: "2.1 · Review" };
-  const native = agents.detectedRow(t, { pid: 20, name: "Codex", tmux: target }, false, true).node;
-  expect(native.bg).toBe(t.selected);
-  expect(textOf(native)).toContain("dataforge 2.1 · Review");
-  native.click();
-  expect(writes).toEqual([["spaces.open-tmux-agent-900-2-3-4"]]);
-  const external = agents.detectedRow(t, { pid: 30, name: "Claude Code", tty: "s003" }, false).node;
-  external.click();
+  const target = { server: "900", session: "$2", window: "@3", pane: "%4", label: "dataforge", detail: "Review · 2.1" };
+  agents.navigation = [{ address: "t1" }, agents.detectedModel({ pid: 20, name: "Codex", tmux: target }, null)];
+  agents.navigate("next-agent");
+  agents.navigate("next-agent");
+  agents.navigate("select-agent-1");
+  expect(writes).toEqual([["agent.focus", { terminal: "t1" }], ["spaces.open-tmux-agent-900-2-3-4"], ["agent.focus", { terminal: "t1" }]]);
+  agents.focusDetected({ pid: 30, name: "Claude Code", tty: "s003" });
   expect(overlays[0].props.agentDetails).toEqual({ pid: 30, name: "Claude Code", location: "This computer", tty: "s003", tmux: false });
 });
 
@@ -452,4 +450,38 @@ test("agent selection prefers the active pane then an unambiguous window or sess
   expect(selectedDetectedAgent(found, active("$0", "@3", null), null)).toBe(3);
   expect(selectedDetectedAgent(found, active("$1", "@9", "%9"), null)).toBe(4);
   expect(selectedDetectedAgent(found, active("$9", "@9", "%9"), null)).toBeUndefined();
+});
+
+test("headless processes disappear and tracked interactive agents are deduped by process identity", () => {
+  const ps = parseProcesses([
+    "10 1 s010 claude     claude",
+    "11 1 s011 claude     claude",
+    "12 1 ?? codex       codex",
+  ].join("\n"));
+  const snapshot = [
+    "900\t$1\t@2\t%4\t10\t0\tProject\t1\t0\t2.1.311\tReview queue\t99",
+    "900\t$1\t@2\t%5\t11\t0\tProject\t1\t1\t2.1.311\tClaude Code\t99",
+  ].join("\n");
+  const terminal = [{ address: "t1", foreground: { pid: 10 }, status: "idle" }];
+  const found = detectedAgents(ps, parseTmuxPanes(snapshot), terminal, [], [{ address: "t1" }]);
+  expect(found.map(a => a.pid)).toEqual([11]);
+  expect(found[0].tmux?.detail).toBe("1.1");
+  expect(parseTmuxPanes(snapshot).get(10)?.[0].detail).toBe("Review queue · 1.0");
+});
+
+test("pinning a detected agent persists the pane target across view reloads", () => {
+  const { agents, data, writes } = harness([]);
+  const process = { pid: 20, name: "Codex", tmux: { server: "900", start: "99", pane: "%4" } };
+  const row = agents.detectedModel(process, null);
+  expect(row.pinned).toBe(false);
+  agents.toggleAgentPin(row);
+  const reloaded = harness([]);
+  reloaded.data.set("tmux.pins", data.get("tmux.pins")!);
+  reloaded.agents.init({}, { timer: { every() {} } });
+  const samePane = reloaded.agents.detectedModel({ ...process, pid: 21 }, null);
+  expect(samePane.pinned).toBe(true);
+  expect(reloaded.agents.detectedModel({ ...process, tmux: { ...process.tmux, start: "100" } }, null).pinned).toBe(false);
+  reloaded.agents.toggleAgentPin(samePane);
+  expect(reloaded.agents.detectedModel(process, null).pinned).toBe(false);
+  expect(writes).toEqual([]);
 });

@@ -33,6 +33,17 @@ export function findClients(clients, terminals, panes) {
   });
 }
 
+export function pickClient(clients, focus, spaces, lastAddress) {
+  const current = spaces.find(space => space.id === focus?.space || (!focus?.space && space.active));
+  const tabs = new Set(current?.tabs?.map(tab => tab.id));
+  return clients.find(client => client.address === (focus?.shown ?? focus?.terminal))
+    ?? clients.find(client => tabs.has(client.tab) && client.address === lastAddress)
+    ?? clients.find(client => tabs.has(client.tab))
+    ?? clients.find(client => client.address === lastAddress)
+    ?? clients.find(client => client.dedicated)
+    ?? clients[0];
+}
+
 export function attachArgv(binary, session) {
   // The core's shell may itself have been started from tmux.
   return ["/bin/sh", "-c", 'unset TMUX; exec "$@"', marker, binary, "-S", session.socket, "attach-session", "-E", "-t", session.id];
