@@ -1,4 +1,4 @@
-const terminalScripts = {
+const TERMINAL_SCRIPTS = {
   terminal: 'if application id "com.apple.Terminal" is not running then return "unavailable"\n' +
     'tell application id "com.apple.Terminal"\n' +
     'repeat with w in windows\nrepeat with t in tabs of w\n' +
@@ -20,7 +20,7 @@ export function macTerminalDevice(tty) {
 
 export function revealTerminalArgs(app, tty) {
   const device = macTerminalDevice(tty);
-  const script = terminalScripts[app];
+  const script = TERMINAL_SCRIPTS[app];
   if (!device || typeof script !== "string") return null;
   return ["-e", 'on run argv\nset targetTTY to item 1 of argv\n' + script + '\nreturn "missing"\nend run', device];
 }

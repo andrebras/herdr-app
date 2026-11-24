@@ -3,7 +3,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, exec, nextCommand } from "herdr";
-import { psArgs, tmuxPaneArgs, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
+import { PS_ARGS, TMUX_PANE_ARGS, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
 import { macTerminalDevice, revealTerminalArgs } from "./external.js";
 
 function layoutHasMod(node, mod) {
@@ -91,7 +91,7 @@ function icon(p, size, color) {
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 
-const detectedIcons = new Map([
+const DETECTED_ICONS = new Map([
   ["Claude Code", ["claude", false]], ["Codex", ["codex", false]], ["OpenCode", ["opencode", true]],
   ["Gemini CLI", ["gemini", true]], ["Amp", ["amp", false]], ["Cursor Agent", ["cursor", true]],
   ["Copilot CLI", ["copilot", true]], ["Pi", ["pi", true]],
@@ -163,8 +163,8 @@ export default class Agents extends View {
         const now = Date.now();
         const scan = now >= this.nextProcessScan;
         const [ps, tmux] = await Promise.allSettled([
-          scan ? exec("ps", psArgs, { timeout: 2500 }) : null,
-          exec("tmux", tmuxPaneArgs, { timeout: 2000 }),
+          scan ? exec("ps", PS_ARGS, { timeout: 2500 }) : null,
+          exec("tmux", TMUX_PANE_ARGS, { timeout: 2000 }),
         ]);
         if (scan) {
           this.nextProcessScan = now + 4500;
@@ -212,7 +212,7 @@ export default class Agents extends View {
   }
 
   detectedModel(agent, selected, contexts = new Map(), tmuxCanFocus = true) {
-    const [imageName, tint] = detectedIcons.get(agent.name) ?? ["agent", true];
+    const [imageName, tint] = DETECTED_ICONS.get(agent.name) ?? ["agent", true];
     const tmux = agent.tmux;
     const program = { icon: `icons/${imageName}.svg`, tint, name: agent.name };
     const tmuxTitle = tmux?.titles?.map(title => liveTitle({ title, program })).find(Boolean);

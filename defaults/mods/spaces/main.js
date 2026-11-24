@@ -6,7 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, checking, terminals, focused, home, notify, nextCommand } from "herdr";
-import { inspectArgs, parseSnapshot, findClients, pickClient, attachArgv, switchArgs, newSessionArgs, parseAgentTarget, selectPaneArgs } from "./tmux.js";
+import { INSPECT_ARGS, parseSnapshot, findClients, pickClient, attachArgv, switchArgs, newSessionArgs, parseAgentTarget, selectPaneArgs } from "./tmux.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -136,7 +136,7 @@ export default class Spaces extends View {
   }
 
   async tmuxSnapshot() {
-    const result = await exec(this.tmuxBinary, inspectArgs, { timeout: 2000 });
+    const result = await exec(this.tmuxBinary, INSPECT_ARGS, { timeout: 2000 });
     if (result.code !== 0 && !/no server running|error connecting to .*\(No such file or directory\)/.test(result.stderr)) {
       throw new Error(result.stderr.trim() || "Could not list tmux sessions.");
     }

@@ -571,7 +571,7 @@ test("tmux and ps are polled only on Linux and macOS", () => {
       window: () => ({ visible: true, platform }),
       exec: (command: string) => { commands.push(command); return new Promise(() => {}); },
       nextCommand: () => new Promise(() => {}),
-      psArgs: [], tmuxPaneArgs: [],
+      PS_ARGS: [], TMUX_PANE_ARGS: [],
     });
     expect(commands.length > 0).toBe(polled);
   }

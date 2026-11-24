@@ -1,10 +1,10 @@
-const marker = "herdr-tmux-client";
-const sessionFormat = "session\t#{session_id}\t#{pid}\t#{socket_path}\t#{session_name}";
-const clientFormat = "client\t#{client_pid}\t#{session_id}\t#{client_name}";
+const MARKER = "herdr-tmux-client";
+const SESSION_FORMAT = "session\t#{session_id}\t#{pid}\t#{socket_path}\t#{session_name}";
+const CLIENT_FORMAT = "client\t#{client_pid}\t#{session_id}\t#{client_name}";
 
-export const inspectArgs = [
-  "-u", "-L", "default", "list-sessions", "-F", sessionFormat,
-  ";", "list-clients", "-F", clientFormat,
+export const INSPECT_ARGS = [
+  "-u", "-L", "default", "list-sessions", "-F", SESSION_FORMAT,
+  ";", "list-clients", "-F", CLIENT_FORMAT,
 ];
 
 export function parseSnapshot(stdout) {
@@ -29,7 +29,7 @@ export function findClients(clients, terminals, panes) {
     const terminal = local.get(pane.terminal);
     const client = byPid.get(terminal?.foreground?.pid) ?? byPid.get(terminal?.pid);
     if (!client) return [];
-    return [{ ...client, pane: pane.pane, address: terminal.address, tab: pane.tab, dedicated: terminal.argv?.includes(marker) }];
+    return [{ ...client, pane: pane.pane, address: terminal.address, tab: pane.tab, dedicated: terminal.argv?.includes(MARKER) }];
   });
 }
 
@@ -46,7 +46,7 @@ export function pickClient(clients, focus, spaces, lastAddress) {
 
 export function attachArgv(binary, session) {
   // The core's shell may itself have been started from tmux.
-  return ["/bin/sh", "-c", 'unset TMUX; exec "$@"', marker, binary, "-S", session.socket, "attach-session", "-E", "-t", session.id];
+  return ["/bin/sh", "-c", 'unset TMUX; exec "$@"', MARKER, binary, "-S", session.socket, "attach-session", "-E", "-t", session.id];
 }
 
 export function switchArgs(session, client) {
@@ -70,5 +70,5 @@ export function newSessionArgs(folder, sessions) {
   const names = new Set(sessions.map(s => s.name));
   let name = base;
   for (let n = 2; names.has(name); n++) name = `${base}-${n}`;
-  return ["-u", "-L", "default", "new-session", "-d", "-P", "-F", sessionFormat, "-c", folder, "-s", name];
+  return ["-u", "-L", "default", "new-session", "-d", "-P", "-F", SESSION_FORMAT, "-c", folder, "-s", name];
 }
