@@ -73,14 +73,14 @@ export default class NewMenu extends View {
       .child(this.row("space", div().w(14).child("+"), "New space", () => run("space.new"), shortcut("space.new")))
       .child(this.row("folder-open", svg("mods/workspace-chrome/folder.svg").size(14), "Open folder…", cx => {
         cx.spawn(async () => {
+          let folder = null;
           try {
-            const folder = await pickFolder({ prompt: "Open folder" });
-            closeOverlay(props().overlay);
-            if (folder) run("space.new", { folder, machine: "" });
+            folder = await pickFolder({ prompt: "Open folder" });
           } catch (e) {
-            closeOverlay(props().overlay);
             notify({ title: "Open folder", body: String(e.message ?? e), level: "error" });
           }
+          closeOverlay(props().overlay);
+          if (folder) run("space.new", { folder, machine: "" });
         });
       }, "", true, false))
       .child(this.row("worktree", svg("mods/workspace-chrome/branch.svg").size(14), "New worktree…", () => openOverlay({ mod: "worktree", kind: "dialog", width: 460, height: 280, props: { space: space?.id, folder: panes().find(p => p.focused)?.cwd, action: "new" } }), "", Boolean(space)))
