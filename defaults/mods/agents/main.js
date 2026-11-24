@@ -139,10 +139,11 @@ export default class Agents extends View {
     const list = this.navigation ?? [];
     if (!list.length) return;
     const index = list.findIndex(a => a.address === this.navigationCurrent);
+    const select = /^select-agent-([1-9]\d*)$/.exec(command);
     let target;
     if (command === "next-agent") target = list[(index + 1) % list.length];
     else if (command === "previous-agent") target = list[index < 0 ? list.length - 1 : (index + list.length - 1) % list.length];
-    else if (/^select-agent-[1-9]\d*$/.test(command)) target = list[Number(command.slice(13)) - 1];
+    else if (select) target = list[Number(select[1]) - 1];
     if (!target) return;
     this.navigationCurrent = target.address;
     // Focus reaches the list late for tmux rows, so hold the target until it does.
