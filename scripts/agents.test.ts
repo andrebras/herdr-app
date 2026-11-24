@@ -670,3 +670,20 @@ test("detected agent names show at once from the New menu's last answer", () => 
   });
   expect(agents.programFor("codex").name).toBe("Codex");
 });
+
+test("a failed process read is tried again after a short pause, not 30 seconds", async () => {
+  let psCode = 1;
+  const { agents } = harness([], {
+    terminals: () => [], focused: () => null, panes: () => [], agents: () => [],
+    exec: (command: string) => Promise.resolve({ code: command === "ps" ? psCode : 0, stdout: "", stderr: "" }),
+    PS_ARGS: [], TMUX_PANE_ARGS: [], parseProcesses, paneCommands, parseTmuxPanes, parseTmuxClients,
+  });
+  const discover = () => new Promise<void>(done => agents.discover({ spawn: async (fn: any) => { await fn({ notify() {} }); done(); } }));
+  const before = Date.now();
+  await discover();
+  expect(agents.nextProcessScan - before).toBeLessThan(10000);
+  psCode = 0;
+  agents.nextProcessScan = 0;
+  await discover();
+  expect(agents.nextProcessScan - before).toBeGreaterThanOrEqual(30000);
+});

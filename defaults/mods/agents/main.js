@@ -184,11 +184,12 @@ export default class Agents extends View {
         // for agents in other terminal apps.
         const signature = JSON.stringify([this.paneCommands, terminals().map(t => t.foreground?.pid ?? t.pid)]);
         if (now >= this.nextProcessScan || signature !== this.processSignature) {
-          this.nextProcessScan = now + 30000;
           this.processSignature = signature;
           let ps = null;
           try { ps = await exec("ps", PS_ARGS, { timeout: 2500 }); } catch {}
           if (ps?.code === 0) this.processes = parseProcesses(ps.stdout);
+          // A failed read is tried again soon, so a starting agent isn't missed for 30 s.
+          this.nextProcessScan = now + (ps?.code === 0 ? 30000 : 4500);
         }
         const all = terminals();
         const current = focused();
