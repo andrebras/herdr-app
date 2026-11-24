@@ -8,7 +8,7 @@ const source = (await readFile(new URL("../defaults/mods/agents/main.js", import
 
 function harness(pins: string[], overrides: Record<string, unknown> = {}) {
   const { checking = () => true, ...rest } = overrides;
-  const globals = { focusedTmux, detectedAgents, selectedDetectedAgent, macTerminalDevice, revealTerminalArgs,
+  const globals = { focusedTmux, detectedAgents, selectedDetectedAgent, macTerminalDevice, revealTerminalArgs, shared: () => null,
     ScrollHandle: { new: () => ({ scroll_to_item() {} }) }, ...rest };
   const data = new Map([["pins", JSON.stringify(pins)]]);
   const writes: unknown[] = [];
@@ -649,4 +649,24 @@ test("processes are read again only when a foreground program changes, or after 
   expect(await discover()).toEqual(["tmux"]);
   agents.nextProcessScan = 0;
   expect(await discover()).toEqual(["tmux", "ps"]);
+});
+
+test("detected agents take names from the program table, and a failed check is tried again", async () => {
+  let answer: () => Promise<unknown[]> = () => Promise.reject(new Error("shell failed"));
+  const { agents } = harness([], { knownAgents: () => answer() });
+  const load = () => new Promise<void>(done => agents.loadCatalog({ spawn: async (fn: any) => { await fn({ notify() {} }); done(); } }));
+  expect(agents.programFor("claude").name).toBe("claude");
+  await load();
+  expect(agents.catalogLoaded).toBe(false);
+  answer = async () => [{ key: "claude", name: "Claude Code", icon: "icons/claude.svg", tint: false }];
+  await load();
+  expect(agents.programFor("claude")).toMatchObject({ name: "Claude Code", icon: "icons/claude.svg" });
+  expect(agents.programFor("aider")).toMatchObject({ name: "aider", icon: "icons/agent.svg" });
+});
+
+test("detected agent names show at once from the New menu's last answer", () => {
+  const { agents } = harness([], {
+    shared: (key: string) => key === "new-menu.agents" ? { "": [{ key: "codex", name: "Codex", icon: "icons/codex.svg", tint: false }] } : null,
+  });
+  expect(agents.programFor("codex").name).toBe("Codex");
 });

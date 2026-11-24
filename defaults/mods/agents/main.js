@@ -116,7 +116,9 @@ export default class Agents extends View {
     this.paneCommands = "";
     this.tmuxRetry = 0;
     // The app's program table names and draws detected agents, like tracked ones.
-    this.catalog = new Map();
+    // The New menu keeps the last answer in shared storage, so names show at once.
+    this.catalog = new Map((shared("new-menu.agents")?.[""] ?? []).map(p => [p.key, p]));
+    this.catalogLoaded = false;
     cx.timer.every(30000, (cx) => cx.notify());
     if (!checking()) {
       const poll = cx => {
@@ -126,10 +128,9 @@ export default class Agents extends View {
       };
       poll(cx);
       cx.timer.every(1500, poll);
-      cx.spawn(async cx => {
-        try { for (const p of await knownAgents()) this.catalog.set(p.key, p); } catch {}
-        cx.notify();
-      });
+      this.loadCatalog(cx);
+      // A failed check is not cached, so try again until one answers.
+      cx.timer.every(30000, cx => this.loadCatalog(cx));
       cx.spawn(async () => {
         for (;;) this.navigate(await nextCommand());
       });
@@ -217,6 +218,20 @@ export default class Agents extends View {
       openOverlay({ mod: "agents", kind: "dialog", width: 365, height: 220,
         props: { agentDetails: { name: this.programFor(agent.name).name, location, pid: agent.pid, tty: agent.tty, tmux: Boolean(tmux) } } });
     }
+  }
+
+  loadCatalog(cx) {
+    if (this.catalogLoaded || this.catalogLoading) return;
+    this.catalogLoading = true;
+    cx.spawn(async cx => {
+      try {
+        this.catalog = new Map((await knownAgents()).map(p => [p.key, p]));
+        this.catalogLoaded = true;
+        cx.notify();
+      } catch {} finally {
+        this.catalogLoading = false;
+      }
+    });
   }
 
   programFor(key) {
