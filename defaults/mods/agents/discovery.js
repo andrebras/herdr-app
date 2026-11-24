@@ -1,12 +1,9 @@
 // Read the local user's process tree. Command arguments are used for matching
 // CLI entrypoints and are never rendered or persisted.
+// args comes last, so spaces inside it never shift the columns before it.
 export const PS_ARGS = ["-xww", "-o", "pid=", "-o", "ppid=", "-o", "tty=", "-o", "args="];
-// comm is asked for on its own, as the last column: in the middle ps cuts it to
-// its column (16 characters on macOS) and a space in it can't be told apart
-// from the gap before args.
-export const PS_COMM_ARGS = ["-xww", "-o", "pid=", "-o", "comm="];
 export const TMUX_PANE_ARGS = ["-u", "-L", "default", "list-panes", "-a", "-F",
-  "#{pid}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{window_name}\t#{pane_title}\t#{start_time}",
+  "#{pid}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{window_name}\t#{pane_title}\t#{start_time}\t#{pane_current_command}",
   ";", "list-clients", "-F", "client\t#{client_pid}\t#{pid}\t#{session_id}\t#{pane_id}\t#{window_id}"];
 
 // Executable names of agents, as their key in the app's program table (`knownAgents()`).
@@ -21,11 +18,7 @@ const KEYS = new Map([
 const base = path => path.split("/").at(-1);
 const executable = path => KEYS.get(base(path).replace(/\.(?:c|m)?js$/, ""));
 
-function identify(command, args) {
-  for (const name of KEYS.keys()) {
-    // macOS can give the full executable path in comm, including spaces.
-    if (command === name || command.endsWith("/" + name)) return KEYS.get(name);
-  }
+function identify(args) {
   const [program, entry, module] = args.split(/\s+/, 3);
   if (!program) return null;
   const name = executable(program);
@@ -37,22 +30,22 @@ function identify(command, args) {
   return null;
 }
 
-export function parseProcesses(stdout, commStdout = "") {
-  const commands = new Map();
-  for (const line of commStdout.split("\n")) {
-    const match = /^\s*(\d+) (.+)$/.exec(line);
-    if (match) commands.set(Number(match[1]), match[2].trim());
-  }
+export function parseProcesses(stdout) {
   const processes = new Map();
   for (const line of stdout.split("\n")) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
     if (!match) continue;
     const [, pid, parent, tty, args] = match;
-    // A process that started between the two ps calls has no comm; args still name it.
-    const command = commands.get(Number(pid)) ?? "";
-    processes.set(Number(pid), { parent: Number(parent), name: identify(command, args), tty: /^\?+$/.test(tty) ? null : tty });
+    processes.set(Number(pid), { parent: Number(parent), name: identify(args), tty: /^\?+$/.test(tty) ? null : tty });
   }
   return processes;
+}
+
+// Each pane's shell and foreground program: when this changes, an agent may
+// have started or stopped, so the process list is read again.
+export function paneCommands(stdout) {
+  return stdout.split("\n").filter(line => line && !line.startsWith("client\t"))
+    .map(line => { const f = line.split("\t"); return f[4] + ":" + f.at(-1); }).sort().join(" ");
 }
 
 export function parseTmuxPanes(stdout) {

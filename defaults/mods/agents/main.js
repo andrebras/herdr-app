@@ -3,7 +3,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, knownAgents, openOverlay, closeOverlay, props, window, layout, checking, exec, nextCommand } from "herdr";
-import { PS_ARGS, PS_COMM_ARGS, TMUX_PANE_ARGS, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
+import { PS_ARGS, TMUX_PANE_ARGS, parseProcesses, paneCommands, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
 import { macTerminalDevice, revealTerminalArgs } from "./external.js";
 
 function layoutHasMod(node, mod) {
@@ -113,6 +113,7 @@ export default class Agents extends View {
     this.tmuxPanes = new Map();
     this.tmuxClients = new Map();
     this.nextProcessScan = 0;
+    this.paneCommands = "";
     this.tmuxRetry = 0;
     // The app's program table names and draws detected agents, like tracked ones.
     this.catalog = new Map();
@@ -163,30 +164,30 @@ export default class Agents extends View {
     cx.spawn(async cx => {
       try {
         const now = Date.now();
-        const scan = now >= this.nextProcessScan;
-        const askTmux = now >= this.tmuxRetry;
-        const [ps, comm, tmux] = await Promise.allSettled([
-          scan ? exec("ps", PS_ARGS, { timeout: 2500 }) : null,
-          scan ? exec("ps", PS_COMM_ARGS, { timeout: 2500 }) : null,
-          askTmux ? exec("tmux", TMUX_PANE_ARGS, { timeout: 2000 }) : null,
-        ]);
-        if (scan) {
-          this.nextProcessScan = now + 4500;
-          if (ps.status === "fulfilled" && ps.value?.code === 0) {
-            this.processes = parseProcesses(ps.value.stdout, comm.status === "fulfilled" && comm.value?.code === 0 ? comm.value.stdout : "");
-          }
-        }
-        if (askTmux) {
-          const result = tmux.status === "fulfilled" ? tmux.value : null;
+        if (now >= this.tmuxRetry) {
+          let result = null;
+          try { result = await exec("tmux", TMUX_PANE_ARGS, { timeout: 2000 }); } catch {}
           if (result?.code === 0 || /no server running|error connecting to .*\(No such file or directory\)/.test(result?.stderr ?? "")) {
             // No server means no panes; anything else (no tmux, a hung server)
             // keeps the last panes and waits before asking again.
             const output = result.code === 0 ? result.stdout : "";
             this.tmuxPanes = parseTmuxPanes(output);
             this.tmuxClients = parseTmuxClients(output);
+            this.paneCommands = paneCommands(output);
           } else {
             this.tmuxRetry = Date.now() + 15000;
           }
+        }
+        // Reading every process costs far more than asking tmux, so it runs when
+        // a pane's or a terminal's foreground program changes, and every 30 s
+        // for agents in other terminal apps.
+        const signature = JSON.stringify([this.paneCommands, terminals().map(t => t.foreground?.pid ?? t.pid)]);
+        if (now >= this.nextProcessScan || signature !== this.processSignature) {
+          this.nextProcessScan = now + 30000;
+          this.processSignature = signature;
+          let ps = null;
+          try { ps = await exec("ps", PS_ARGS, { timeout: 2500 }); } catch {}
+          if (ps?.code === 0) this.processes = parseProcesses(ps.stdout);
         }
         const all = terminals();
         const current = focused();

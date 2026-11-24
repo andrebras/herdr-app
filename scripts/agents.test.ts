@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "../defaults/mods/agents/discovery.js";
+import { parseProcesses, paneCommands, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "../defaults/mods/agents/discovery.js";
 import { macTerminalDevice, revealTerminalArgs } from "../defaults/mods/agents/external.js";
 
 const source = (await readFile(new URL("../defaults/mods/agents/main.js", import.meta.url), "utf8"))
@@ -456,16 +456,12 @@ test("agent selection prefers the active pane then an unambiguous window or sess
   expect(selectedDetectedAgent(found, active("$9", "@9", "%9"), null)).toBeUndefined();
 });
 
-test("process names read comm from its own ps call, so spaces in comm or args don't shift the split", () => {
+test("process names come from args, so spaces inside args don't shift the columns", () => {
   const processes = parseProcesses([
     "40 1 s001 claude --model  opus",
     "41 1 s002 node  /opt/lib/codex.js  --full-auto",
-    "42 1 s003 sleep  60",
-    "43 1 s004 claude",
-  ].join("\n"), [
-    "40 /Users/me/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude",
-    "41 node",
-    "42 /Applications/My Tools/claude helper",
+    "42 1 s003 /Applications/My Tools/claude helper",
+    "43 1 s004 /Users/me/.local/bin/claude",
   ].join("\n"));
   expect([...processes].map(([pid, p]) => [pid, p.name])).toEqual([
     [40, "claude"], [41, "codex"], [42, null], [43, "claude"],
@@ -589,7 +585,7 @@ test("tmux and ps are polled only on Linux and macOS", () => {
       window: () => ({ visible: true, platform }),
       exec: (command: string) => { commands.push(command); return new Promise(() => {}); },
       nextCommand: () => new Promise(() => {}),
-      PS_ARGS: [], PS_COMM_ARGS: [], TMUX_PANE_ARGS: [],
+      PS_ARGS: [], TMUX_PANE_ARGS: [],
     });
     expect(commands.length > 0).toBe(polled);
   }
@@ -604,7 +600,7 @@ test("a missing or failing tmux is asked again only after a pause, keeping the l
       calls.push(command);
       return command === "tmux" ? reply() : Promise.resolve({ code: 0, stdout: "", stderr: "" });
     },
-    PS_ARGS: [], PS_COMM_ARGS: [], TMUX_PANE_ARGS: [], parseProcesses, parseTmuxPanes, parseTmuxClients,
+    PS_ARGS: [], TMUX_PANE_ARGS: [], parseProcesses, paneCommands, parseTmuxPanes, parseTmuxClients,
   });
   const discover = async () => {
     calls.length = 0;
@@ -612,8 +608,8 @@ test("a missing or failing tmux is asked again only after a pause, keeping the l
     await new Promise<void>(done => agents.discover({ spawn: async (fn: any) => { await fn({ notify() {} }); done(); } }));
     return [...calls];
   };
-  expect(await discover()).toEqual(["ps", "ps", "tmux"]);
-  expect(await discover()).toEqual(["ps", "ps"]);
+  expect(await discover()).toEqual(["tmux", "ps"]);
+  expect(await discover()).toEqual(["ps"]);
   agents.tmuxRetry = 0;
   reply = () => Promise.resolve({ code: 0, stdout: "900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\t\t99\nclient\t55\t900\t$0\t%4\t@1", stderr: "" });
   await discover();
@@ -622,10 +618,35 @@ test("a missing or failing tmux is asked again only after a pause, keeping the l
   await discover();
   expect([...agents.tmuxPanes.keys()]).toEqual([61]);
   expect(agents.tmuxClients.size).toBe(1);
-  expect(await discover()).toEqual(["ps", "ps"]);
+  expect(await discover()).toEqual(["ps"]);
   agents.tmuxRetry = 0;
   reply = () => Promise.resolve({ code: 1, stdout: "", stderr: "no server running on /tmp/tmux-501/default" });
   await discover();
   expect(agents.tmuxPanes.size).toBe(0);
-  expect(await discover()).toEqual(["ps", "ps", "tmux"]);
+  expect(await discover()).toEqual(["tmux", "ps"]);
+});
+
+test("processes are read again only when a foreground program changes, or after 30 seconds", async () => {
+  const calls: string[] = [];
+  let panesOut = "900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\t\t99\tzsh";
+  const { agents } = harness([], {
+    terminals: () => [], focused: () => null, panes: () => [], agents: () => [],
+    exec: (command: string) => {
+      calls.push(command);
+      return Promise.resolve({ code: 0, stdout: command === "tmux" ? panesOut : "", stderr: "" });
+    },
+    PS_ARGS: [], TMUX_PANE_ARGS: [], parseProcesses, paneCommands, parseTmuxPanes, parseTmuxClients,
+  });
+  const discover = async () => {
+    calls.length = 0;
+    await new Promise<void>(done => agents.discover({ spawn: async (fn: any) => { await fn({ notify() {} }); done(); } }));
+    return [...calls];
+  };
+  expect(await discover()).toEqual(["tmux", "ps"]);
+  expect(await discover()).toEqual(["tmux"]);
+  panesOut = panesOut.replace(/zsh$/, "claude");
+  expect(await discover()).toEqual(["tmux", "ps"]);
+  expect(await discover()).toEqual(["tmux"]);
+  agents.nextProcessScan = 0;
+  expect(await discover()).toEqual(["tmux", "ps"]);
 });
