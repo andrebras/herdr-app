@@ -976,6 +976,8 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   icon beside Spaces creates a session in the current local folder. Use the
   tab bar's `+` → Open folder to start an ordinary local shell in a chosen
   folder. Windows and panes inside a tmux session are managed by tmux.
+  Closing the tmux tab preserves its Space as the host while that Space exists.
+  Selecting a session opens a new tab there if the client has detached.
 
 - The Agents sidebar on macOS and Linux lists recognised interactive local
   agents under Detected when their status is unavailable. A row shows the tmux session,
@@ -985,6 +987,8 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   when Automation is available. The footer counts agents reporting status.
   A tmux pin follows the pane for the life of the server. The Agents palette
   offers Next listed agent and Previous listed agent.
+  Tracked and detected agents use the same row controls. A dash in the status
+  slot denotes an agent that has not reported its status.
 
 ### Terminal link handlers
 

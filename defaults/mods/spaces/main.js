@@ -109,6 +109,7 @@ export default class Spaces extends View {
     cx.timer.every(250, (cx) => this.checkNew(cx));
     this.tmux = { sessions: [], clients: [] };
     this.tmuxFolded = localStorage.getItem("tmux.folded") === "true";
+    this.tmuxHost = localStorage.getItem("tmux.host");
     if (!checking()) {
       const poll = cx => {
         const win = window();
@@ -165,6 +166,20 @@ export default class Spaces extends View {
     this.drainTmux(cx);
   }
 
+  resolveTmuxHost(workspaces, client) {
+    const attached = client && workspaces.find(s => !s.machine && s.tabs?.some(tab => tab.id === client.tab));
+    const remembered = workspaces.find(s => !s.machine && s.id === this.tmuxHost);
+    // Older versions created a Space literally named "tmux" and did not
+    // remember its ID after the last tmux tab closed. Only migrate one match.
+    const legacy = this.tmuxHost ? [] : workspaces.filter(s => !s.machine && s.name === "tmux");
+    const host = attached ?? remembered ?? (legacy.length === 1 ? legacy[0] : null);
+    if (host && host.id !== this.tmuxHost) {
+      this.tmuxHost = host.id;
+      localStorage.setItem("tmux.host", host.id);
+    }
+    return host;
+  }
+
   drainTmux(cx) {
     if (!this.tmuxRequest || this.refreshingTmux || this.tmuxBusy) return;
     // While a client is attaching, wait for Herdr to report its foreground PID.
@@ -179,7 +194,9 @@ export default class Spaces extends View {
         this.tmux = await this.tmuxSnapshot();
         const clients = findClients(this.tmux.clients, terminals(), panes());
         const at = focused();
-        const client = pickClient(clients, at, spaces(), this.lastTmuxClient);
+        const workspaces = spaces();
+        const client = pickClient(clients, at, workspaces, this.lastTmuxClient);
+        const host = this.resolveTmuxHost(workspaces, client);
         if (session) {
           session = this.tmux.sessions.find(s => s.id === session.id && s.server === session.server && (!session.socket || s.socket === session.socket));
           if (!session) throw new Error("That tmux session has ended.");
@@ -211,7 +228,9 @@ export default class Spaces extends View {
           run("pane.focus", { pane: client.pane });
         } else {
           this.tmuxStartingUntil = Date.now() + 5000;
-          run("space.new", { name: "tmux", tab: "tmux", machine: "", folder: home(), argv: attachArgv(this.tmuxBinary, session) });
+          const start = { name: "tmux", folder: home(), argv: attachArgv(this.tmuxBinary, session) };
+          if (host) run("tab.new", { ...start, space: host.id, focus: true });
+          else run("space.new", { ...start, tab: "tmux", machine: "" });
         }
         this.tmux = await this.tmuxSnapshot();
       } catch (e) {
@@ -522,8 +541,10 @@ export default class Spaces extends View {
     const current = focus?.shown ?? focus?.terminal;
     const selected = clients.find(c => c.address === current)?.session;
     const rows = this.ordered();
-    const client = clients.length ? pickClient(clients, focus, rows.map(({ w }) => w), this.lastTmuxClient) : null;
-    const host = this.tmux.sessions.length && rows.find(({ w }) => w.tabs?.some(tab => tab.id === client?.tab));
+    const workspaces = spaces();
+    const client = clients.length ? pickClient(clients, focus, workspaces, this.lastTmuxClient) : null;
+    const hostSpace = this.tmux.sessions.length ? this.resolveTmuxHost(workspaces, client) : null;
+    const host = rows.find(({ w }) => w.id === hostSpace?.id);
     const { rows: tmuxRows, activeAt: tmuxAt } = this.tmuxGroup(t, collapsed, selected, Boolean(host));
     const drawRows = (mine, local) => {
       const elements = [];

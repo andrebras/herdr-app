@@ -383,7 +383,8 @@ test("tmux navigation targets the exact pane, and external rows open details", (
     div: element, h_flex: element, svg: element, image: element,
   });
   const target = { server: "900", session: "$2", window: "@3", pane: "%4", label: "dataforge", detail: "Review · 2.1" };
-  agents.navigation = [{ address: "t1" }, agents.detectedModel({ pid: 20, name: "Codex", tmux: target }, null)];
+  agents.navigation = [{ address: "t1", navigate: () => writes.push(["agent.focus", { terminal: "t1" }]) },
+    agents.detectedModel({ pid: 20, name: "Codex", tmux: target }, null)];
   agents.navigate("next-agent");
   agents.navigate("next-agent");
   agents.navigate("select-agent-1");
@@ -474,14 +475,55 @@ test("pinning a detected agent persists the pane target across view reloads", ()
   const process = { pid: 20, name: "Codex", tmux: { server: "900", start: "99", pane: "%4" } };
   const row = agents.detectedModel(process, null);
   expect(row.pinned).toBe(false);
-  agents.toggleAgentPin(row);
+  row.pin(true);
   const reloaded = harness([]);
   reloaded.data.set("tmux.pins", data.get("tmux.pins")!);
   reloaded.agents.init({}, { timer: { every() {} } });
   const samePane = reloaded.agents.detectedModel({ ...process, pid: 21 }, null);
   expect(samePane.pinned).toBe(true);
   expect(reloaded.agents.detectedModel({ ...process, tmux: { ...process.tmux, start: "100" } }, null).pinned).toBe(false);
-  reloaded.agents.toggleAgentPin(samePane);
+  samePane.pin(false);
   expect(reloaded.agents.detectedModel(process, null).pinned).toBe(false);
   expect(writes).toEqual([]);
+});
+
+test("tracked and tmux agents share selection, row activation, and the same pin control", () => {
+  let pane = { terminal: "t1", pane: "p1", tab: "tab1" };
+  const stock = { address: "t1", tab: "tab1", pane: "p1", space: "s1", space_name: "Project",
+    focused: true, status: "idle", pinned: false, seq: 1, program: { name: "Claude Code", icon: "icons/claude.svg" } };
+  const reported = [stock];
+  const { agents, writes, data } = harness([], {
+    agents: () => reported, terminals: () => [{ address: "tmux", pid: 55 }], panes: () => [pane],
+    focused: () => ({ terminal: pane.terminal, pane: pane.pane }),
+    spaces: () => [{ id: "s1", name: "Project", tabs: [{ id: "tab1", name: "Review", named: true }] }],
+    layout: () => ({ id: "sidebar", size: { px: 268 }, content: { mod: "spaces" } }), shared: () => null,
+    theme: () => ({ selected: "#selected" }), setAgentOrder() {},
+    div: element, v_flex: element, h_flex: element, svg: element, image: element,
+  });
+  agents.processes = parseProcesses("64 61 s010 claude   claude\n61 1 s010 zsh       zsh");
+  agents.tmuxPanes = parseTmuxPanes("900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\tClaude Code\t99");
+  agents.tmuxClients = parseTmuxClients("client\t55\t900\t$0\t%4\t@1");
+  const find = (id: string) => {
+    const walk = (node: any): any => node?.id === id ? node : node?.children?.map(walk).find(Boolean);
+    return walk(agents.render({}).node);
+  };
+  expect(find("ag-t1").bg).toBe("#selected");
+  expect(find("detected-agent-64").bg).toBeUndefined();
+  find("ag-t1").click();
+  agents.hovered = "t1";
+  find("pin-t1").click(null, { stop_propagation() {}, notify() {} });
+
+  stock.focused = false;
+  pane = { terminal: "tmux", pane: "p2", tab: "tab1" };
+  expect(find("detected-agent-64").bg).toBe("#selected");
+  expect(textOf(find("detected-agent-64"))).toContain("Project · Review · 1.0");
+  find("detected-agent-64").click();
+  agents.hovered = "detected-agent-64";
+  find("pin-detected-agent-64").click(null, { stop_propagation() {}, notify() {} });
+  expect(find("pinned")).toBeDefined();
+  expect(JSON.parse(data.get("tmux.pins")!)).toHaveLength(1);
+  expect(writes).toEqual([
+    ["pane.focus", { pane: "p1" }], ["terminal.pin", { terminal: "t1", pinned: true }],
+    ["spaces.open-tmux-agent-900-0-1-4"],
+  ]);
 });

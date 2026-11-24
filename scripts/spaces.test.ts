@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findClients, pickClient } from "../defaults/mods/spaces/tmux.js";
+import { attachArgv, findClients, pickClient } from "../defaults/mods/spaces/tmux.js";
 const source = (await readFile(new URL("../defaults/mods/spaces/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "").replace("export default class Spaces", "class Spaces").replace(/^export /gm, "");
 
@@ -14,7 +14,8 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   const availability = [{ name: null as string | null, layout: "ready" }];
   const moves: { id: string; index: number }[] = [];
   const handlers: Record<string, (...args: any[]) => void> = {};
-  const env = { layout: null as unknown, focus: null as unknown, terminals: [] as unknown[], panes: [] as unknown[] };
+  const env = { layout: null as unknown, focus: null as unknown, terminals: [] as unknown[], panes: [] as unknown[],
+    run: null as ((name: string, args: unknown) => void) | null };
   // The list's scroll position: the requests the view makes are what the sidebar would scroll by.
   const ScrollHandle = { new: () => ({ calls: [] as number[], scroll_to_item(index: number) { this.calls.push(index); } }) };
   const theme = () => new Proxy({}, { get: () => "#000000" });
@@ -29,7 +30,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
     if (method === "id") ids.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "checking", "findClients", "pickClient", "focused", "terminals", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "checking", "findClients", "pickClient", "focused", "terminals", "home", "attachArgv", "notify", `${source}; return Spaces;`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -40,11 +41,13 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
     { setItem(key: string, value: string) { storage.set(key, value); }, getItem(key: string) { return storage.get(key) ?? null; } },
     () => snapshot, () => env.panes,
     (name: string, args: { id: string; index: number }) => {
+      if (env.run) return env.run(name, args);
       expect(name).toBe("space.move");
       moves.push(args);
     },
     ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
     ScrollHandle, theme, () => env.layout, () => {}, () => true, findClients, pickClient, () => env.focus, () => env.terminals,
+    () => "/fixture/home", attachArgv, (error: unknown) => { throw Error(JSON.stringify(error)); },
   );
   const view = new Spaces();
   view.reconnecting = {};
@@ -636,4 +639,48 @@ test("the existing Space owns the tmux tree even when its regular shell tab is s
   h.view.tmuxFolded = true;
   expect(h.view.grouped({}, false)).toHaveLength(2);
   expect(h.view.activeAt).toBe(0);
+});
+
+test("closing the tmux tab keeps sessions under the same Space and reopens a tab there", async () => {
+  const host = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "mux", panes: 1 }, { id: "shell", panes: 1 }] };
+  const h = scrollHarness([host]);
+  const session = { id: "$1", name: "dataforge", server: "900", socket: "/tmp/tmux/default" };
+  h.view.tmux.sessions = [session];
+  h.view.tmux.clients = [{ session: "$1", pid: 10 }];
+  h.env.terminals = [{ address: "t1", pid: 10 }];
+  h.env.panes = [{ terminal: "t1", tab: "mux", pane: "p1" }];
+  h.env.focus = { space: "work", terminal: "t1" };
+  h.view.grouped({}, false);
+  expect(h.storage.get("tmux.host")).toBe("work");
+
+  host.name = "Work";
+  host.tabs.shift();
+  h.view.tmux.clients = [];
+  h.env.terminals = [];
+  h.env.panes = [];
+  h.env.focus = { space: "work", terminal: "shell" };
+  h.ids.length = 0;
+  expect(h.view.grouped({}, false)).toHaveLength(2);
+  expect(h.ids).toContain("space-tmux-toggle-work");
+  expect(h.ids).not.toContain("tmux-group");
+  expect(h.view.activeAt).toBe(0);
+
+  const actions: unknown[][] = [];
+  h.env.run = (name, args) => actions.push([name, args]);
+  h.view.findTmuxBinary = async () => (h.view.tmuxBinary = "/usr/bin/tmux");
+  h.view.tmuxSnapshot = async () => ({ sessions: [session], clients: [] });
+  h.view.useTmux(h.cx, session);
+  await Promise.all(h.tasks);
+  expect(actions).toEqual([["tab.new", {
+    name: "tmux", folder: "/fixture/home", argv: attachArgv("/usr/bin/tmux", session), space: "work", focus: true,
+  }]]);
+});
+
+test("an update can recover the only legacy tmux Space after it detached", () => {
+  const host = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "shell", panes: 1 }] };
+  const h = scrollHarness([host]);
+  h.view.tmux.sessions = [{ id: "$1", name: "dataforge" }];
+  expect(h.view.grouped({}, false)).toHaveLength(2);
+  expect(h.storage.get("tmux.host")).toBe("work");
+  expect(h.ids).not.toContain("tmux-group");
 });
