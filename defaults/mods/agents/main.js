@@ -2,7 +2,12 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, exec } from "herdr";
+import { psArgs, tmuxPaneArgs, parseProcesses, parseTmuxPanes, detectedAgents } from "./discovery.js";
+
+function layoutHasMod(node, mod) {
+  return node && !node.hidden && (node.content?.mod === mod || (node.children ?? []).some(child => layoutHasMod(child, mod)));
+}
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -92,7 +97,63 @@ export default class Agents extends View {
     if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
+    this.processes = new Map();
+    this.tmuxPanes = new Map();
     cx.timer.every(30000, (cx) => cx.notify());
+    if (!checking()) {
+      const poll = cx => {
+        const win = window();
+        if (win?.visible && ["linux", "macos"].includes(win.platform)) this.discover(cx);
+      };
+      poll(cx);
+      cx.timer.every(4000, poll);
+    }
+  }
+
+  discover(cx) {
+    if (this.discovering) return;
+    this.discovering = true;
+    cx.spawn(async cx => {
+      try {
+        const [ps, tmux] = await Promise.allSettled([
+          exec("/bin/ps", psArgs, { timeout: 2500 }),
+          exec("tmux", tmuxPaneArgs, { timeout: 2000 }),
+        ]);
+        if (ps.status !== "fulfilled" || ps.value.code !== 0) return;
+        const processes = parseProcesses(ps.value.stdout);
+        const tmuxPanes = parseTmuxPanes(tmux.status === "fulfilled" && tmux.value.code === 0 ? tmux.value.stdout : "");
+        const found = detectedAgents(processes, tmuxPanes, terminals(), panes(), agents());
+        const key = JSON.stringify(found);
+        this.processes = processes;
+        this.tmuxPanes = tmuxPanes;
+        if (key !== this.discoveryKey) {
+          this.discoveryKey = key;
+          cx.notify();
+        }
+      } finally {
+        this.discovering = false;
+      }
+    });
+  }
+
+  detectedRow(t, agent, collapsed) {
+    const { tmux, pane } = agent;
+    const location = tmux?.label || (pane ? "Herdr" : "This computer");
+    const spacesMod = props()?.tmuxSpacesMod ?? "spaces";
+    const jump = tmux ? layoutHasMod(layout(), spacesMod) : Boolean(pane);
+    return h_flex().id(`detected-agent-${agent.pid}`).h(29).px(collapsed ? 0 : 8)
+      .gap(7).flex_none().items_center().rounded(7).text_color(t.muted)
+      .tooltip(`${agent.name} · ${location} · Status unavailable`)
+      .when(jump, el => el.cursor_pointer().hover(s => s.bg(t.hover)).on_click(() => {
+        if (tmux) {
+          const suffix = [tmux.server, tmux.session.slice(1), tmux.window.slice(1), tmux.pane.slice(1)].join("-");
+          run(`${spacesMod}.open-tmux-agent-${suffix}`);
+        } else run("pane.focus", { pane });
+      }))
+      .when(collapsed, el => el.justify_center())
+      .child(svg("mods/workspace-chrome/terminal.svg").size(13).flex_none().text_color(t.dim))
+      .when(!collapsed, el => el.child(div().flex_1().min_w(0).truncate().child(agent.name))
+        .child(div().max_w(115).min_w(0).truncate().text_size(11).text_color(t.dim).child(location)));
   }
 
   // Stamps agents whose state changed. Done and idle count as one: looking at a
@@ -227,6 +288,7 @@ export default class Agents extends View {
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
+    const detected = detectedAgents(this.processes, this.tmuxPanes, all, panes(), list);
     this.migratePins(all);
     const shown = focused()?.agent;
     const now = Date.now();
@@ -418,6 +480,11 @@ export default class Agents extends View {
     const rows = collapsed
       ? list.flatMap(withKids)
       : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
+    if (detected.length) {
+      const group = { id: "detected-agents", label: "Detected", status: null, members: detected };
+      if (!collapsed) rows.push(header(group));
+      if (collapsed || !this.folded.has(group.id)) rows.push(...detected.map(a => this.detectedRow(t, a, collapsed)));
+    }
 
     return v_flex()
       .size_full()
@@ -449,8 +516,8 @@ export default class Agents extends View {
             ),
         ),
       )
-      .when(list.length === 0 && !collapsed, (el) =>
-        el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
+      .when(list.length === 0 && detected.length === 0 && !collapsed, (el) =>
+        el.child(div().px(12).text_size(12).text_color(t.dim).child("No agents detected yet.")),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
       .when(collapsed, (el) =>

@@ -976,6 +976,11 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   tab bar's `+` → Open folder to start an ordinary local shell in a chosen
   folder. Windows and panes inside a tmux session are managed by tmux.
 
+- The Agents sidebar on macOS and Linux lists recognised local agent processes
+  under Detected when their status is unavailable. A row for a tmux agent goes
+  to its pane on the local default server. Herdr also shows recognised agents
+  running in other terminal apps when it can identify their processes.
+
 ### Terminal link handlers
 
 In `mod.json`, declare what the mod can open:

@@ -42,6 +42,18 @@ export function switchArgs(session, client) {
   return ["-S", session.socket, "switch-client", "-E", "-c", client.name, "-t", session.id];
 }
 
+export function parseAgentTarget(command) {
+  const match = /^open-tmux-agent-(\d+)-(\d+)-(\d+)-(\d+)$/.exec(command);
+  if (!match) return null;
+  const [, server, session, window, pane] = match;
+  return { session: { server, id: "$" + session }, window: "@" + window, pane: "%" + pane };
+}
+
+export function selectPaneArgs(session, target) {
+  const window = session.id + ":" + target.window;
+  return ["-S", session.socket, "select-window", "-t", window, ";", "select-pane", "-t", window + "." + target.pane];
+}
+
 export function newSessionArgs(folder, sessions) {
   const base = folder.split("/").filter(Boolean).pop()?.replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/^-+|-+$/g, "") || "shell";
   const names = new Set(sessions.map(s => s.name));

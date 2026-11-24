@@ -5,8 +5,8 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, checking, terminals, focused, home, notify } from "herdr";
-import { inspectArgs, parseSnapshot, findClients, attachArgv, switchArgs, newSessionArgs } from "./tmux.js";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, checking, terminals, focused, home, notify, nextCommand } from "herdr";
+import { inspectArgs, parseSnapshot, findClients, attachArgv, switchArgs, newSessionArgs, parseAgentTarget, selectPaneArgs } from "./tmux.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -115,6 +115,12 @@ export default class Spaces extends View {
       };
       poll(cx);
       cx.timer.every(1000, poll);
+      cx.spawn(async cx => {
+        for (;;) {
+          const target = parseAgentTarget(await nextCommand());
+          if (target && this.tmuxBinary) this.useTmux(cx, target.session, target);
+        }
+      });
     }
   }
 
@@ -147,7 +153,7 @@ export default class Spaces extends View {
     });
   }
 
-  useTmux(cx, session) {
+  useTmux(cx, session, target) {
     if (this.tmuxBusy || !this.tmuxBinary) return;
     this.tmuxBusy = true;
     cx.spawn(async cx => {
@@ -162,7 +168,7 @@ export default class Spaces extends View {
         // Give a new terminal time to appear in herdr-core's foreground snapshot.
         if (!client && Date.now() < (this.tmuxStartingUntil ?? 0)) return;
         if (session) {
-          session = this.tmux.sessions.find(s => s.id === session.id && s.socket === session.socket && s.server === session.server);
+          session = this.tmux.sessions.find(s => s.id === session.id && s.server === session.server && (!session.socket || s.socket === session.socket));
           if (!session) throw new Error("That tmux session has ended.");
         } else {
           const current = spaces().find(s => s.active);
@@ -178,6 +184,10 @@ export default class Spaces extends View {
           if (created.code !== 0) throw new Error(created.stderr.trim() || "Could not create a tmux session.");
           [session] = parseSnapshot(created.stdout).sessions;
           if (!session) throw new Error("tmux did not return the new session.");
+        }
+        if (target) {
+          const picked = await exec(this.tmuxBinary, selectPaneArgs(session, target), { timeout: 2000 });
+          if (picked.code !== 0) throw new Error(picked.stderr.trim() || "That tmux pane is no longer available.");
         }
         if (client) {
           if (client.session !== session.id) {
