@@ -192,7 +192,7 @@ export default class Agents extends View {
   focusDetected(agent) {
     const { tmux, pane } = agent;
     const location = tmux?.label || (pane ? "Herdr" : "This computer");
-    const spacesMod = props()?.tmuxSpacesMod ?? "spaces";
+    const spacesMod = "spaces";
     if (tmux && layoutHasMod(layout(), spacesMod)) {
       const suffix = [tmux.server, tmux.session.slice(1), tmux.window.slice(1), tmux.pane.slice(1)].join("-");
       run(`${spacesMod}.open-tmux-agent-${suffix}`);
@@ -477,7 +477,7 @@ export default class Agents extends View {
     for (const a of native) {
       if (a.detail == null && counts.get(JSON.stringify([a.spaceName, null])) > 1) a.detail = a.title;
     }
-    const tmuxCanFocus = layoutHasMod(layout(), props()?.tmuxSpacesMod ?? "spaces");
+    const tmuxCanFocus = layoutHasMod(layout(), "spaces");
     const discovered = detected.map(agent => this.detectedModel(agent, selected, contexts, tmuxCanFocus));
     if (discovered.some(a => a.focused)) for (const a of native) {
       if (a.address === (current?.shown ?? current?.terminal)) a.focused = false;
