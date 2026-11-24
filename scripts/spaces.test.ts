@@ -676,6 +676,16 @@ test("closing the tmux tab keeps sessions under the same Space and reopens a tab
   }]]);
 });
 
+test("a tmux server that stops answering drops its sessions", async () => {
+  const h = scrollHarness([]);
+  h.view.tmux.sessions = [{ id: "$1", name: "dataforge" }];
+  h.view.findTmuxBinary = async () => (h.view.tmuxBinary = "/usr/bin/tmux");
+  h.view.tmuxSnapshot = async () => { throw new Error("server exited unexpectedly"); };
+  h.view.refreshTmux(h.cx);
+  await Promise.all(h.tasks);
+  expect(h.view.tmux).toEqual({ sessions: [], clients: [] });
+});
+
 test("an update can recover the only legacy tmux Space after it detached", () => {
   const host = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "shell", panes: 1 }] };
   const h = scrollHarness([host]);

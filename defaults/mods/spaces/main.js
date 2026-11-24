@@ -151,6 +151,8 @@ export default class Spaces extends View {
         if (await this.findTmuxBinary()) this.tmux = await this.tmuxSnapshot();
         else this.tmuxRetry = Date.now() + 15000;
       } catch {
+        // A server that stops answering has no sessions we can open.
+        this.tmux = { sessions: [], clients: [] };
         this.tmuxRetry = Date.now() + 15000;
       } finally {
         this.refreshingTmux = false;
