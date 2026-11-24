@@ -15,7 +15,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   const moves: { id: string; index: number }[] = [];
   const handlers: Record<string, (...args: any[]) => void> = {};
   const env = { layout: null as unknown, focus: null as unknown, terminals: [] as unknown[], panes: [] as unknown[],
-    run: null as ((name: string, args: unknown) => void) | null };
+    run: null as ((name: string, args: unknown) => void) | null, window: { active: true } as unknown, checking: true };
   // The list's scroll position: the requests the view makes are what the sidebar would scroll by.
   const ScrollHandle = { new: () => ({ calls: [] as number[], scroll_to_item(index: number) { this.calls.push(index); } }) };
   const theme = () => new Proxy({}, { get: () => "#000000" });
@@ -45,8 +45,8 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
       expect(name).toBe("space.move");
       moves.push(args);
     },
-    ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
-    ScrollHandle, theme, () => env.layout, () => {}, () => true, findClients, pickClient, () => env.focus, () => env.terminals,
+    ...Array(4).fill(() => element), () => null, () => availability, execGit, () => env.window, watch,
+    ScrollHandle, theme, () => env.layout, () => {}, () => env.checking, findClients, pickClient, () => env.focus, () => env.terminals,
     () => "/fixture/home", attachArgv, (error: unknown) => { throw Error(JSON.stringify(error)); },
   );
   const view = new Spaces();
@@ -693,4 +693,15 @@ test("a Space the person named tmux does not become the tmux host", () => {
   h.view.grouped({}, false);
   expect(h.storage.has("tmux.host")).toBe(false);
   expect(h.ids).toContain("tmux-group");
+});
+
+test("tmux is polled only on Linux and macOS", () => {
+  for (const [platform, polled] of [["windows", false], ["linux", true], ["macos", true]] as const) {
+    const h = harness();
+    Object.assign(h.env, { checking: false, window: { visible: true, platform } });
+    let refreshed = 0;
+    h.view.refreshTmux = () => { refreshed++; };
+    h.view.init({}, { timer: { every() {} }, notify() {}, spawn() {} });
+    expect(refreshed > 0).toBe(polled);
+  }
 });

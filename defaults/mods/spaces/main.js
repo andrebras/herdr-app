@@ -113,6 +113,7 @@ export default class Spaces extends View {
     if (!checking()) {
       const poll = cx => {
         const win = window();
+        // tmux is a Unix tool; Windows has none, so nothing is polled there.
         if (win?.visible && ["linux", "macos"].includes(win.platform) && Date.now() >= (this.tmuxRetry ?? 0)) this.refreshTmux(cx);
       };
       poll(cx);

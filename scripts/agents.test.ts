@@ -7,17 +7,18 @@ const source = (await readFile(new URL("../defaults/mods/agents/main.js", import
   .replace(/^import .*;\n/gm, "").replace("export default class Agents", "class Agents");
 
 function harness(pins: string[], overrides: Record<string, unknown> = {}) {
+  const { checking = () => true, ...rest } = overrides;
   const globals = { focusedTmux, detectedAgents, selectedDetectedAgent, macTerminalDevice, revealTerminalArgs,
-    ScrollHandle: { new: () => ({ scroll_to_item() {} }) }, ...overrides };
+    ScrollHandle: { new: () => ({ scroll_to_item() {} }) }, ...rest };
   const data = new Map([["pins", JSON.stringify(pins)]]);
   const writes: unknown[] = [];
   const storage = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => data.set(k, v), removeItem: (k: string) => data.delete(k) };
   const Agents = new Function("View", "localStorage", "props", "run", "checking", ...Object.keys(globals), `${source}; return Agents;`)(
     class {}, storage, () => ({}), (...args: unknown[]) => writes.push(args),
-    () => true, ...Object.values(globals),
+    checking, ...Object.values(globals),
   );
   const agents = new Agents();
-  agents.init({}, { timer: { every() {} } });
+  agents.init({}, { timer: { every() {} }, spawn: (fn: (cx: unknown) => unknown) => fn({ notify() {} }) });
   return { agents, data, writes };
 }
 
@@ -560,4 +561,18 @@ test("repeated next-agent steps on while focus has not caught up with the last s
   agents.navigate("next-agent");
   agents.followFocus("c", agents.navigationPending.until);
   expect(agents.navigationCurrent).toBe("c");
+});
+
+test("tmux and ps are polled only on Linux and macOS", () => {
+  for (const [platform, polled] of [["windows", false], ["linux", true], ["macos", true]] as const) {
+    const commands: string[] = [];
+    harness([], {
+      checking: () => false,
+      window: () => ({ visible: true, platform }),
+      exec: (command: string) => { commands.push(command); return new Promise(() => {}); },
+      nextCommand: () => new Promise(() => {}),
+      psArgs: [], tmuxPaneArgs: [],
+    });
+    expect(commands.length > 0).toBe(polled);
+  }
 });

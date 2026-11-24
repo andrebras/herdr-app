@@ -123,6 +123,7 @@ export default class Agents extends View {
     if (!checking()) {
       const poll = cx => {
         const win = window();
+        // tmux and ps are Unix tools; Windows has neither, so nothing is polled there.
         if (win?.visible && ["linux", "macos"].includes(win.platform)) this.discover(cx);
       };
       poll(cx);
