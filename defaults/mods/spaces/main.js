@@ -202,7 +202,7 @@ export default class Spaces extends View {
         } else {
           const current = spaces().find(s => s.active);
           let folder = current?.machine ? home() : at?.cwd || current?.folder || home();
-          const activeSession = client?.address === at?.terminal
+          const activeSession = client?.address === (at?.shown ?? at?.terminal)
             ? this.tmux.sessions.find(s => s.id === client?.session)
             : null;
           if (activeSession) {
