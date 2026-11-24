@@ -373,8 +373,8 @@ test("links detected processes to the current tmux session and identifies the se
   expect(focusedTmux(parseTmuxClients(output), terminals, "remote/t1")).toBeNull();
   const found = detectedAgents(processes, parseTmuxPanes(output), terminals, [], [{ address: "t2" }], selected);
   expect(found.map(agent => [agent.pid, agent.name, agent.tmux?.label, agent.tmux?.titles, agent.tmux?.position, agent.tty])).toEqual([
-    [20, "Codex", "linked", ["Review"], "2.1", "pts/0"],
-    [30, "Claude Code", undefined, undefined, undefined, "s003"],
+    [20, "codex", "linked", ["Review"], "2.1", "pts/0"],
+    [30, "claude", undefined, undefined, undefined, "s003"],
   ]);
 });
 
@@ -468,7 +468,7 @@ test("process names read comm from its own ps call, so spaces in comm or args do
     "42 /Applications/My Tools/claude helper",
   ].join("\n"));
   expect([...processes].map(([pid, p]) => [pid, p.name])).toEqual([
-    [40, "Claude Code"], [41, "Codex"], [42, null], [43, "Claude Code"],
+    [40, "claude"], [41, "codex"], [42, null], [43, "claude"],
   ]);
 });
 
@@ -556,6 +556,8 @@ test("tracked and tmux agents share selection, row activation, and the same pin 
     theme: () => ({ selected: "#selected", muted: "#muted", foreground: "#foreground" }), setAgentOrder() {},
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
   });
+  // Names and icons come from the app's program table, as for tracked agents.
+  agents.catalog = new Map([["claude", { key: "claude", name: "Claude Code", icon: "icons/claude.svg", tint: false }]]);
   agents.processes = parseProcesses("64 61 s010 claude\n61 1 s010 zsh");
   agents.tmuxPanes = parseTmuxPanes("900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\t✻ Review\t99");
   agents.tmuxClients = parseTmuxClients("client\t55\t900\t$0\t%4\t@1");

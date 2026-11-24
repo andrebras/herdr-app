@@ -9,21 +9,22 @@ export const TMUX_PANE_ARGS = ["-u", "-L", "default", "list-panes", "-a", "-F",
   "#{pid}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{window_name}\t#{pane_title}\t#{start_time}",
   ";", "list-clients", "-F", "client\t#{client_pid}\t#{pid}\t#{session_id}\t#{pane_id}\t#{window_id}"];
 
-const NAMES = new Map([
-  ["claude", "Claude Code"], ["claude-code", "Claude Code"],
-  ["codex", "Codex"], ["codex-aarch64-apple-darwin", "Codex"], ["codex-x86_64-apple-darwin", "Codex"],
-  ["codex-aarch64-unknown-linux-musl", "Codex"], ["codex-x86_64-unknown-linux-musl", "Codex"],
-  ["opencode", "OpenCode"], ["gemini", "Gemini CLI"], ["gemini-cli", "Gemini CLI"],
-  ["aider", "Aider"], ["amp", "Amp"], ["cursor-agent", "Cursor Agent"],
-  ["copilot", "Copilot CLI"], ["pi", "Pi"],
+// Executable names of agents, as their key in the app's program table (`knownAgents()`).
+const KEYS = new Map([
+  ["claude", "claude"], ["claude-code", "claude"],
+  ["codex", "codex"], ["codex-aarch64-apple-darwin", "codex"], ["codex-x86_64-apple-darwin", "codex"],
+  ["codex-aarch64-unknown-linux-musl", "codex"], ["codex-x86_64-unknown-linux-musl", "codex"],
+  ["opencode", "opencode"], ["gemini", "gemini"], ["gemini-cli", "gemini"],
+  ["aider", "aider"], ["amp", "amp"], ["cursor-agent", "cursor"],
+  ["copilot", "copilot"], ["pi", "pi"],
 ]);
 const base = path => path.split("/").at(-1);
-const executable = path => NAMES.get(base(path).replace(/\.(?:c|m)?js$/, ""));
+const executable = path => KEYS.get(base(path).replace(/\.(?:c|m)?js$/, ""));
 
 function identify(command, args) {
-  for (const name of NAMES.keys()) {
+  for (const name of KEYS.keys()) {
     // macOS can give the full executable path in comm, including spaces.
-    if (command === name || command.endsWith("/" + name)) return NAMES.get(name);
+    if (command === name || command.endsWith("/" + name)) return KEYS.get(name);
   }
   const [program, entry, module] = args.split(/\s+/, 3);
   if (!program) return null;

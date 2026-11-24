@@ -2,7 +2,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, exec, nextCommand } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, knownAgents, openOverlay, closeOverlay, props, window, layout, checking, exec, nextCommand } from "herdr";
 import { PS_ARGS, PS_COMM_ARGS, TMUX_PANE_ARGS, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
 import { macTerminalDevice, revealTerminalArgs } from "./external.js";
 
@@ -91,12 +91,6 @@ function icon(p, size, color) {
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 
-const DETECTED_ICONS = new Map([
-  ["Claude Code", ["claude", false]], ["Codex", ["codex", false]], ["OpenCode", ["opencode", true]],
-  ["Gemini CLI", ["gemini", true]], ["Amp", ["amp", false]], ["Cursor Agent", ["cursor", true]],
-  ["Copilot CLI", ["copilot", true]], ["Pi", ["pi", true]],
-]);
-
 export default class Agents extends View {
   init(_props, cx) {
     if (props()?.sortMenu || props()?.agentDetails) return;
@@ -120,6 +114,8 @@ export default class Agents extends View {
     this.tmuxClients = new Map();
     this.nextProcessScan = 0;
     this.tmuxRetry = 0;
+    // The app's program table names and draws detected agents, like tracked ones.
+    this.catalog = new Map();
     cx.timer.every(30000, (cx) => cx.notify());
     if (!checking()) {
       const poll = cx => {
@@ -129,6 +125,10 @@ export default class Agents extends View {
       };
       poll(cx);
       cx.timer.every(1500, poll);
+      cx.spawn(async cx => {
+        try { for (const p of await knownAgents()) this.catalog.set(p.key, p); } catch {}
+        cx.notify();
+      });
       cx.spawn(async () => {
         for (;;) this.navigate(await nextCommand());
       });
@@ -214,8 +214,12 @@ export default class Agents extends View {
       run("pane.focus", { pane });
     } else {
       openOverlay({ mod: "agents", kind: "dialog", width: 365, height: 220,
-        props: { agentDetails: { name: agent.name, location, pid: agent.pid, tty: agent.tty, tmux: Boolean(tmux) } } });
+        props: { agentDetails: { name: this.programFor(agent.name).name, location, pid: agent.pid, tty: agent.tty, tmux: Boolean(tmux) } } });
     }
+  }
+
+  programFor(key) {
+    return this.catalog.get(key) ?? { key, name: key, icon: "icons/agent.svg", tint: true };
   }
 
   pinTmux(key, pinned) {
@@ -225,9 +229,8 @@ export default class Agents extends View {
   }
 
   detectedModel(agent, selected, contexts = new Map(), tmuxCanFocus = true) {
-    const [imageName, tint] = DETECTED_ICONS.get(agent.name) ?? ["agent", true];
     const tmux = agent.tmux;
-    const program = { icon: `icons/${imageName}.svg`, tint, name: agent.name };
+    const program = this.programFor(agent.name);
     const tmuxTitle = tmux?.titles?.map(title => liveTitle({ title, program })).find(Boolean);
     const pinKey = tmux?.start ? JSON.stringify([tmux.server, tmux.start, tmux.pane, agent.name]) : null;
     const context = contexts.get(agent.pane);
@@ -237,9 +240,9 @@ export default class Agents extends View {
       address, rowId: address, reported: false, focused: agent.pid === selected,
       group: tmux ? `tmux-${tmux.server}-${tmux.session}` : context?.space ?? "local-external",
       groupName: tmux?.label ?? context?.name ?? "This computer",
-      spaceName: tmux?.label ?? context?.name ?? agent.name,
-      title: tmuxTitle || agent.name,
-      detail: tmux ? tmuxTitle : context ? agent.name : agent.tty,
+      spaceName: tmux?.label ?? context?.name ?? program.name,
+      title: tmuxTitle || program.name,
+      detail: tmux ? tmuxTitle : context ? program.name : agent.tty,
       location: tmux?.position,
       program,
       status: "unknown", rank: 0, since: null, children: [],
