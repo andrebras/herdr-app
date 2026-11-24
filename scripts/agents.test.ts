@@ -576,3 +576,38 @@ test("tmux and ps are polled only on Linux and macOS", () => {
     expect(commands.length > 0).toBe(polled);
   }
 });
+
+test("a missing or failing tmux is asked again only after a pause, keeping the last panes", async () => {
+  const calls: string[] = [];
+  let reply: () => Promise<unknown> = () => Promise.reject(new Error("spawn tmux ENOENT"));
+  const { agents } = harness([], {
+    terminals: () => [], focused: () => null, panes: () => [], agents: () => [],
+    exec: (command: string) => {
+      calls.push(command);
+      return command === "tmux" ? reply() : Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    },
+    PS_ARGS: [], TMUX_PANE_ARGS: [], parseProcesses, parseTmuxPanes, parseTmuxClients,
+  });
+  const discover = async () => {
+    calls.length = 0;
+    agents.nextProcessScan = 0;
+    await new Promise<void>(done => agents.discover({ spawn: async (fn: any) => { await fn({ notify() {} }); done(); } }));
+    return [...calls];
+  };
+  expect(await discover()).toEqual(["ps", "tmux"]);
+  expect(await discover()).toEqual(["ps"]);
+  agents.tmuxRetry = 0;
+  reply = () => Promise.resolve({ code: 0, stdout: "900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\t\t99\nclient\t55\t900\t$0\t%4\t@1", stderr: "" });
+  await discover();
+  expect([...agents.tmuxPanes.keys()]).toEqual([61]);
+  reply = () => Promise.resolve({ code: 1, stdout: "", stderr: "server not responding" });
+  await discover();
+  expect([...agents.tmuxPanes.keys()]).toEqual([61]);
+  expect(agents.tmuxClients.size).toBe(1);
+  expect(await discover()).toEqual(["ps"]);
+  agents.tmuxRetry = 0;
+  reply = () => Promise.resolve({ code: 1, stdout: "", stderr: "no server running on /tmp/tmux-501/default" });
+  await discover();
+  expect(agents.tmuxPanes.size).toBe(0);
+  expect(await discover()).toEqual(["ps", "tmux"]);
+});

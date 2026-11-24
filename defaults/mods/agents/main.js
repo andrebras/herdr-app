@@ -119,6 +119,7 @@ export default class Agents extends View {
     this.tmuxPanes = new Map();
     this.tmuxClients = new Map();
     this.nextProcessScan = 0;
+    this.tmuxRetry = 0;
     cx.timer.every(30000, (cx) => cx.notify());
     if (!checking()) {
       const poll = cx => {
@@ -162,24 +163,32 @@ export default class Agents extends View {
       try {
         const now = Date.now();
         const scan = now >= this.nextProcessScan;
+        const askTmux = now >= this.tmuxRetry;
         const [ps, tmux] = await Promise.allSettled([
           scan ? exec("ps", PS_ARGS, { timeout: 2500 }) : null,
-          exec("tmux", TMUX_PANE_ARGS, { timeout: 2000 }),
+          askTmux ? exec("tmux", TMUX_PANE_ARGS, { timeout: 2000 }) : null,
         ]);
         if (scan) {
           this.nextProcessScan = now + 4500;
           if (ps.status === "fulfilled" && ps.value?.code === 0) this.processes = parseProcesses(ps.value.stdout);
         }
-        const tmuxOutput = tmux.status === "fulfilled" && tmux.value.code === 0 ? tmux.value.stdout : "";
-        const tmuxPanes = parseTmuxPanes(tmuxOutput);
-        const tmuxClients = parseTmuxClients(tmuxOutput);
+        if (askTmux) {
+          const result = tmux.status === "fulfilled" ? tmux.value : null;
+          if (result?.code === 0 || /no server running|error connecting to .*\(No such file or directory\)/.test(result?.stderr ?? "")) {
+            // No server means no panes; anything else (no tmux, a hung server)
+            // keeps the last panes and waits before asking again.
+            const output = result.code === 0 ? result.stdout : "";
+            this.tmuxPanes = parseTmuxPanes(output);
+            this.tmuxClients = parseTmuxClients(output);
+          } else {
+            this.tmuxRetry = Date.now() + 15000;
+          }
+        }
         const all = terminals();
         const current = focused();
-        const active = focusedTmux(tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
-        const found = detectedAgents(this.processes, tmuxPanes, all, panes(), agents(), active);
+        const active = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
+        const found = detectedAgents(this.processes, this.tmuxPanes, all, panes(), agents(), active);
         const key = JSON.stringify([found, active]);
-        this.tmuxPanes = tmuxPanes;
-        this.tmuxClients = tmuxClients;
         if (key !== this.discoveryKey) {
           this.discoveryKey = key;
           cx.notify();
