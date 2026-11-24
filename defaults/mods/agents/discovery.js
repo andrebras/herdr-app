@@ -123,14 +123,10 @@ export function selectedDetectedAgent(agents, active, herdrPane) {
   return session.length === 1 ? session[0].pid : undefined;
 }
 
-export function detectedAgents(processes, tmuxPanes, terminals, herdrPanes, tracked, selected, clients = new Map()) {
+export function detectedAgents(processes, tmuxPanes, terminals, herdrPanes, tracked, selected) {
   const existing = new Set(tracked.map(a => a.address));
   const shown = new Map(herdrPanes.filter(p => p.terminal).map(p => [p.terminal, p.pane]));
   const owned = new Map();
-  // tmux panes shown by a tracked Herdr terminal's tmux client: that row
-  // already stands for the agent in the pane, so it comes back marked
-  // `shownBy` (still there for selection, but not to be listed twice).
-  const trackedPanes = new Map();
   for (const terminal of terminals) {
     if (!terminal.address || terminal.address.includes("/")) continue;
     const owner = {
@@ -140,8 +136,6 @@ export function detectedAgents(processes, tmuxPanes, terminals, herdrPanes, trac
     };
     if (terminal.pid) owned.set(terminal.pid, owner);
     if (terminal.foreground?.pid) owned.set(terminal.foreground.pid, owner);
-    const client = clients.get(terminal.foreground?.pid) ?? clients.get(terminal.pid);
-    if (owner.tracked && client?.pane) trackedPanes.set(client.server + " " + client.pane, terminal.address);
   }
 
   const result = [];
@@ -156,9 +150,7 @@ export function detectedAgents(processes, tmuxPanes, terminals, herdrPanes, trac
     const alreadyTracked = owner?.tracked && (owner.name === process.name || (!tmux && !owner.name));
     if (!nested && !alreadyTracked) {
       const target = tmux?.find(t => t.server === selected?.server && t.session === selected.session) ?? tmux?.[0];
-      const shownBy = tmux?.map(t => trackedPanes.get(t.server + " " + t.pane)).find(Boolean);
-      result.push({ pid, name: process.name, tmux: target, pane: owner?.pane, terminal: owner?.address, pinned: owner?.pinned, tty: process.tty,
-        ...shownBy && { shownBy } });
+      result.push({ pid, name: process.name, tmux: target, pane: owner?.pane, terminal: owner?.address, pinned: owner?.pinned, tty: process.tty });
     }
   }
   return result.sort((a, b) => Number(Boolean(b.tmux)) - Number(Boolean(a.tmux))

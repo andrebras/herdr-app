@@ -191,7 +191,7 @@ export default class Agents extends View {
         const all = terminals();
         const current = focused();
         const active = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
-        const found = detectedAgents(this.processes, this.tmuxPanes, all, panes(), agents(), active, this.tmuxClients);
+        const found = detectedAgents(this.processes, this.tmuxPanes, all, panes(), agents(), active);
         const key = JSON.stringify([found, active]);
         if (key !== this.discoveryKey) {
           this.discoveryKey = key;
@@ -439,9 +439,8 @@ export default class Agents extends View {
     const allPanes = panes();
     const current = focused();
     const tmuxActive = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
-    const found = detectedAgents(this.processes, this.tmuxPanes, all, allPanes, list, tmuxActive, this.tmuxClients);
-    const selected = selectedDetectedAgent(found, tmuxActive, current?.pane);
-    const detected = found.filter(agent => !agent.shownBy);
+    const detected = detectedAgents(this.processes, this.tmuxPanes, all, allPanes, list, tmuxActive);
+    const selected = selectedDetectedAgent(detected, tmuxActive, current?.pane);
     this.migratePins(all);
     const shown = current?.agent;
     const now = Date.now();

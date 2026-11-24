@@ -472,42 +472,6 @@ test("process names read comm from its own ps call, so spaces in comm or args do
   ]);
 });
 
-test("an agent in the tmux pane a tracked Herdr terminal shows is listed once", () => {
-  const ps = parseProcesses(["55 54 s001 tmux attach", "61 1 s010 /bin/zsh", "62 61 s010 claude",
-    "71 1 s011 /bin/zsh", "72 71 s011 codex"].join("\n"));
-  const output = ["900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\t\t99",
-    "900\t$0\t@2\t%6\t71\t0\tProject\t2\t0\tBuild\t\t99", "client\t55\t900\t$0\t%4\t@1"].join("\n");
-  const terminals = [{ address: "t1", pid: 54, foreground: { pid: 55 }, status: "working" }];
-  const clients = parseTmuxClients(output);
-  const active = focusedTmux(clients, terminals, "t1");
-  const found = detectedAgents(ps, parseTmuxPanes(output), terminals, [], [{ address: "t1" }], active, clients);
-  expect(found.map(a => [a.pid, a.shownBy])).toEqual([[62, "t1"], [72, undefined]]);
-  // The hidden agent still holds the selection, so the session's other agent isn't picked.
-  expect(selectedDetectedAgent(found, active, null)).toBe(62);
-  const untracked = [{ address: "t1", pid: 54, foreground: { pid: 55 } }];
-  expect(detectedAgents(ps, parseTmuxPanes(output), untracked, [], [], active, clients).map(a => a.shownBy)).toEqual([undefined, undefined]);
-
-  const { agents } = harness([], {
-    agents: () => [{ address: "t1", tab: "tab1", pane: "p1", space: "s1", space_name: "Project", focused: true,
-      status: "working", pinned: false, seq: 1, program: { name: "Claude Code", icon: "icons/claude.svg" } }],
-    terminals: () => terminals, panes: () => [{ terminal: "t1", pane: "p1", tab: "tab1" }],
-    focused: () => ({ terminal: "t1", pane: "p1", agent: "t1" }),
-    spaces: () => [{ id: "s1", name: "Project", tabs: [{ id: "tab1", name: "Review", named: true }] }],
-    layout: () => ({ id: "sidebar", size: { px: 268 }, content: { mod: "spaces" } }), shared: () => null,
-    theme: () => ({ selected: "#selected" }), setAgentOrder() {},
-    div: element, v_flex: element, h_flex: element, svg: element, image: element,
-  });
-  agents.processes = ps;
-  agents.tmuxPanes = parseTmuxPanes(output);
-  agents.tmuxClients = clients;
-  const rows = new Map<string, string>();
-  const walk = (node: any) => { if (/^(ag-t|detected-agent-)/.test(node?.id ?? "")) rows.set(node.id, node.bg); node?.children?.forEach(walk); };
-  walk(agents.render({}).node);
-  expect([...rows.keys()]).toEqual(["ag-t1", "detected-agent-72"]);
-  expect(rows.get("ag-t1")).toBe("#selected");
-  expect(rows.get("detected-agent-72")).toBeUndefined();
-});
-
 test("headless processes disappear and tracked interactive agents are deduped by process identity", () => {
   const ps = parseProcesses([
     "10 1 s010 claude",
