@@ -191,7 +191,7 @@ export default class Agents extends View {
     } else if (!tmux && pane) {
       run("pane.focus", { pane });
     } else {
-      openOverlay({ mod: props()?.selfMod ?? "agents", kind: "dialog", width: 365, height: 220,
+      openOverlay({ mod: "agents", kind: "dialog", width: 365, height: 220,
         props: { agentDetails: { name: agent.name, location, pid: agent.pid, tty: agent.tty, tmux: Boolean(tmux) } } });
     }
   }
@@ -680,7 +680,7 @@ export default class Agents extends View {
                 .text_size(11)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
-                .on_click(() => openOverlay({ mod: props()?.selfMod ?? "agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
+                .on_click(() => openOverlay({ mod: "agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
                 .tooltip(`Sort agents: ${sort.label}`)
                 .child(svg(`mods/workspace-chrome/${sort.icon}.svg`).size(14)),
             ),

@@ -538,3 +538,9 @@ test("tracked and tmux agents share selection, row activation, and the same pin 
     ["spaces.open-tmux-agent-900-0-1-4"],
   ]);
 });
+
+test("the mod opens its own overlays by literal name, so mod.clone can rename them", () => {
+  const targets = [...source.matchAll(/openOverlay\(\{ mod: ([^,]+),/g)].map(m => m[1]);
+  expect(targets.length).toBeGreaterThan(0);
+  expect(new Set(targets)).toEqual(new Set(['"agents"']));
+});
