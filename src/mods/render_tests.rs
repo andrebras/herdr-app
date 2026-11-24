@@ -248,7 +248,7 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                 "exec" if first == "/bin/sh" && a.get(1).map(from_host) == Some(json!(["-c", "command -v tmux"])) => {
                     Some(json!({"code":1,"stdout":"","stderr":""}))
                 }
-                "exec" if first == "/bin/ps" && a.get(1).map(from_host).and_then(|v| v.get(0).cloned()) == Some(json!("-xww")) => {
+                "exec" if first == "ps" && a.get(1).map(from_host).and_then(|v| v.get(0).cloned()) == Some(json!("-xww")) => {
                     Some(json!({"code":0,"stdout":"","stderr":""}))
                 }
                 "exec" if first == "tmux" && a.get(1).map(from_host).and_then(|v| v.get(3).cloned()) == Some(json!("list-panes")) => {

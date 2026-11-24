@@ -154,7 +154,7 @@ export default class Agents extends View {
         const now = Date.now();
         const scan = now >= this.nextProcessScan;
         const [ps, tmux] = await Promise.allSettled([
-          scan ? exec("/bin/ps", psArgs, { timeout: 2500 }) : null,
+          scan ? exec("ps", psArgs, { timeout: 2500 }) : null,
           exec("tmux", tmuxPaneArgs, { timeout: 2000 }),
         ]);
         if (scan) {
