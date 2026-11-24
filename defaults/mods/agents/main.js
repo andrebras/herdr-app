@@ -208,10 +208,9 @@ export default class Agents extends View {
   focusDetected(agent) {
     const { tmux, pane } = agent;
     const location = tmux?.label || (pane ? "Herdr" : "This computer");
-    const spacesMod = "spaces";
-    if (tmux && layoutHasMod(layout(), spacesMod)) {
+    if (tmux && layoutHasMod(layout(), "spaces")) {
       const suffix = [tmux.server, tmux.session.slice(1), tmux.window.slice(1), tmux.pane.slice(1)].join("-");
-      run(`${spacesMod}.open-tmux-agent-${suffix}`);
+      run(`spaces.open-tmux-agent-${suffix}`);
     } else if (!tmux && pane) {
       run("pane.focus", { pane });
     } else {

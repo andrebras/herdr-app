@@ -172,7 +172,7 @@ export default class Spaces extends View {
   resolveTmuxHost(workspaces, client) {
     const attached = client && workspaces.find(s => !s.machine && s.tabs?.some(tab => tab.id === client.tab));
     const remembered = workspaces.find(s => !s.machine && s.id === this.tmuxHost);
-    const host = attached ?? remembered ?? null;
+    const host = attached ?? remembered;
     if (host && host.id !== this.tmuxHost) {
       this.tmuxHost = host.id;
       localStorage.setItem("tmux.host", host.id);
