@@ -544,3 +544,20 @@ test("the mod opens its own overlays by literal name, so mod.clone can rename th
   expect(targets.length).toBeGreaterThan(0);
   expect(new Set(targets)).toEqual(new Set(['"agents"']));
 });
+
+test("repeated next-agent steps on while focus has not caught up with the last step", () => {
+  const { agents, writes } = harness([]);
+  const row = (address: string) => ({ address, navigate: () => writes.push(address) });
+  agents.navigation = [row("a"), row("b"), row("c")];
+  agents.followFocus("a", 0);
+  agents.navigate("next-agent");
+  const sent = agents.navigationPending.until;
+  agents.followFocus("a", sent - 1);
+  agents.navigate("next-agent");
+  expect(writes).toEqual(["b", "c"]);
+  agents.followFocus("c", sent);
+  expect(agents.navigationPending).toBeNull();
+  agents.navigate("next-agent");
+  agents.followFocus("c", agents.navigationPending.until);
+  expect(agents.navigationCurrent).toBe("c");
+});

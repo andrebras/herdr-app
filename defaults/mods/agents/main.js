@@ -143,7 +143,15 @@ export default class Agents extends View {
     else if (/^select-agent-[1-9]\d*$/.test(command)) target = list[Number(command.slice(13)) - 1];
     if (!target) return;
     this.navigationCurrent = target.address;
+    // Focus reaches the list late for tmux rows, so hold the target until it does.
+    this.navigationPending = { address: target.address, until: Date.now() + 3000 };
     target.navigate();
+  }
+
+  followFocus(address, now = Date.now()) {
+    const pending = this.navigationPending;
+    if (pending && (address === pending.address || now >= pending.until)) this.navigationPending = null;
+    this.navigationCurrent = this.navigationPending?.address ?? address;
   }
 
   discover(cx) {
@@ -491,7 +499,7 @@ export default class Agents extends View {
     if (pinned.length) groups.unshift({ id: "pinned", label: "Pinned", status: null, members: pinned });
     const ordered = groups.flatMap(g => g.members);
     this.navigation = ordered.filter(a => a.navigate);
-    this.navigationCurrent = this.navigation.find(a => a.focused)?.address ?? shown;
+    this.followFocus(this.navigation.find(a => a.focused)?.address ?? shown, now);
     const navigationIndices = new Map(this.navigation.map((a, i) => [a.address, i + 1]));
     setAgentOrder(ordered.filter(a => a.reported).map(a => a.address),
       this.navigation.some(a => !a.reported) ? this.navigation.length : undefined);
