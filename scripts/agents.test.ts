@@ -354,12 +354,12 @@ test("a title's leading emoji stays, a status glyph before it goes", () => {
 
 test("links detected processes to the current tmux session and identifies the selected pane", () => {
   const processes = parseProcesses([
-    "10 1 pts/0 zsh        /bin/zsh",
-    "20 10 pts/0 node      node /opt/bin/codex",
-    "21 20 pts/0 codex     /opt/bin/codex",
-    "30 1 s003 claude      claude --resume",
-    "31 1 ?? claude        claude",
-    "32 1 ?? bash          bash -c echo claude",
+    "10 1 pts/0 /bin/zsh",
+    "20 10 pts/0 node /opt/bin/codex",
+    "21 20 pts/0 /opt/bin/codex",
+    "30 1 s003 claude --resume",
+    "31 1 ?? claude",
+    "32 1 ?? bash -c echo claude",
   ].join("\n"));
   const output = [
     "900\t$0\t@3\t%4\t10\t0\tdataforge\t1\t0\tReview",
@@ -406,11 +406,11 @@ test("revealing a Mac terminal uses a validated terminal device argument", () =>
 
 test("a Spaces switch highlights the agent even when tmux is focused on the window's side pane", () => {
   const processes = parseProcesses([
-    "55 54 s001 tmux      tmux attach",
-    "61 1 s010 zsh        /bin/zsh",
-    "62 61 s010 claude    claude --resume",
-    "71 1 s011 zsh        /bin/zsh",
-    "72 71 s011 codex     codex",
+    "55 54 s001 tmux attach",
+    "61 1 s010 /bin/zsh",
+    "62 61 s010 claude --resume",
+    "71 1 s011 /bin/zsh",
+    "72 71 s011 codex",
   ].join("\n"));
   const panes = parseTmuxPanes([
     "900\t$0\t@1\t%4\t61\t0\tdataforge\t1\t0\tReview",
@@ -456,11 +456,27 @@ test("agent selection prefers the active pane then an unambiguous window or sess
   expect(selectedDetectedAgent(found, active("$9", "@9", "%9"), null)).toBeUndefined();
 });
 
+test("process names read comm from its own ps call, so spaces in comm or args don't shift the split", () => {
+  const processes = parseProcesses([
+    "40 1 s001 claude --model  opus",
+    "41 1 s002 node  /opt/lib/codex.js  --full-auto",
+    "42 1 s003 sleep  60",
+    "43 1 s004 claude",
+  ].join("\n"), [
+    "40 /Users/me/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude",
+    "41 node",
+    "42 /Applications/My Tools/claude helper",
+  ].join("\n"));
+  expect([...processes].map(([pid, p]) => [pid, p.name])).toEqual([
+    [40, "Claude Code"], [41, "Codex"], [42, null], [43, "Claude Code"],
+  ]);
+});
+
 test("headless processes disappear and tracked interactive agents are deduped by process identity", () => {
   const ps = parseProcesses([
-    "10 1 s010 claude     claude",
-    "11 1 s011 claude     claude",
-    "12 1 ?? codex       codex",
+    "10 1 s010 claude",
+    "11 1 s011 claude",
+    "12 1 ?? codex",
   ].join("\n"));
   const snapshot = [
     "900\t$1\t@2\t%4\t10\t0\tProject\t1\t0\t2.1.311\tReview queue\t99",
@@ -504,7 +520,7 @@ test("tracked and tmux agents share selection, row activation, and the same pin 
     theme: () => ({ selected: "#selected", muted: "#muted", foreground: "#foreground" }), setAgentOrder() {},
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
   });
-  agents.processes = parseProcesses("64 61 s010 claude   claude\n61 1 s010 zsh       zsh");
+  agents.processes = parseProcesses("64 61 s010 claude\n61 1 s010 zsh");
   agents.tmuxPanes = parseTmuxPanes("900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\t✻ Review\t99");
   agents.tmuxClients = parseTmuxClients("client\t55\t900\t$0\t%4\t@1");
   const find = (id: string) => {
@@ -571,7 +587,7 @@ test("tmux and ps are polled only on Linux and macOS", () => {
       window: () => ({ visible: true, platform }),
       exec: (command: string) => { commands.push(command); return new Promise(() => {}); },
       nextCommand: () => new Promise(() => {}),
-      PS_ARGS: [], TMUX_PANE_ARGS: [],
+      PS_ARGS: [], PS_COMM_ARGS: [], TMUX_PANE_ARGS: [],
     });
     expect(commands.length > 0).toBe(polled);
   }
@@ -586,7 +602,7 @@ test("a missing or failing tmux is asked again only after a pause, keeping the l
       calls.push(command);
       return command === "tmux" ? reply() : Promise.resolve({ code: 0, stdout: "", stderr: "" });
     },
-    PS_ARGS: [], TMUX_PANE_ARGS: [], parseProcesses, parseTmuxPanes, parseTmuxClients,
+    PS_ARGS: [], PS_COMM_ARGS: [], TMUX_PANE_ARGS: [], parseProcesses, parseTmuxPanes, parseTmuxClients,
   });
   const discover = async () => {
     calls.length = 0;
@@ -594,8 +610,8 @@ test("a missing or failing tmux is asked again only after a pause, keeping the l
     await new Promise<void>(done => agents.discover({ spawn: async (fn: any) => { await fn({ notify() {} }); done(); } }));
     return [...calls];
   };
-  expect(await discover()).toEqual(["ps", "tmux"]);
-  expect(await discover()).toEqual(["ps"]);
+  expect(await discover()).toEqual(["ps", "ps", "tmux"]);
+  expect(await discover()).toEqual(["ps", "ps"]);
   agents.tmuxRetry = 0;
   reply = () => Promise.resolve({ code: 0, stdout: "900\t$0\t@1\t%4\t61\t0\tProject\t1\t0\tReview\t\t99\nclient\t55\t900\t$0\t%4\t@1", stderr: "" });
   await discover();
@@ -604,10 +620,10 @@ test("a missing or failing tmux is asked again only after a pause, keeping the l
   await discover();
   expect([...agents.tmuxPanes.keys()]).toEqual([61]);
   expect(agents.tmuxClients.size).toBe(1);
-  expect(await discover()).toEqual(["ps"]);
+  expect(await discover()).toEqual(["ps", "ps"]);
   agents.tmuxRetry = 0;
   reply = () => Promise.resolve({ code: 1, stdout: "", stderr: "no server running on /tmp/tmux-501/default" });
   await discover();
   expect(agents.tmuxPanes.size).toBe(0);
-  expect(await discover()).toEqual(["ps", "tmux"]);
+  expect(await discover()).toEqual(["ps", "ps", "tmux"]);
 });

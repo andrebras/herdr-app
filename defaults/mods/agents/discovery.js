@@ -1,6 +1,10 @@
 // Read the local user's process tree. Command arguments are used for matching
 // CLI entrypoints and are never rendered or persisted.
-export const PS_ARGS = ["-xww", "-o", "pid=", "-o", "ppid=", "-o", "tty=", "-o", "comm=", "-o", "args="];
+export const PS_ARGS = ["-xww", "-o", "pid=", "-o", "ppid=", "-o", "tty=", "-o", "args="];
+// comm is asked for on its own, as the last column: in the middle ps cuts it to
+// its column (16 characters on macOS) and a space in it can't be told apart
+// from the gap before args.
+export const PS_COMM_ARGS = ["-xww", "-o", "pid=", "-o", "comm="];
 export const TMUX_PANE_ARGS = ["-u", "-L", "default", "list-panes", "-a", "-F",
   "#{pid}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{window_name}\t#{pane_title}\t#{start_time}",
   ";", "list-clients", "-F", "client\t#{client_pid}\t#{pid}\t#{session_id}\t#{pane_id}\t#{window_id}"];
@@ -32,16 +36,19 @@ function identify(command, args) {
   return null;
 }
 
-export function parseProcesses(stdout) {
+export function parseProcesses(stdout, commStdout = "") {
+  const commands = new Map();
+  for (const line of commStdout.split("\n")) {
+    const match = /^\s*(\d+) (.+)$/.exec(line);
+    if (match) commands.set(Number(match[1]), match[2].trim());
+  }
   const processes = new Map();
   for (const line of stdout.split("\n")) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
     if (!match) continue;
-    const [, pid, parent, tty, rest] = match;
-    // ps pads comm to a column; an overlong command gets at least one separator.
-    const gap = /\s{2,}/.exec(rest) ?? /\s+/.exec(rest);
-    const command = gap ? rest.slice(0, gap.index) : rest;
-    const args = gap ? rest.slice(gap.index + gap[0].length) : command;
+    const [, pid, parent, tty, args] = match;
+    // A process that started between the two ps calls has no comm; args still name it.
+    const command = commands.get(Number(pid)) ?? "";
     processes.set(Number(pid), { parent: Number(parent), name: identify(command, args), tty: /^\?+$/.test(tty) ? null : tty });
   }
   return processes;

@@ -3,7 +3,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, exec, nextCommand } from "herdr";
-import { PS_ARGS, TMUX_PANE_ARGS, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
+import { PS_ARGS, PS_COMM_ARGS, TMUX_PANE_ARGS, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
 import { macTerminalDevice, revealTerminalArgs } from "./external.js";
 
 function layoutHasMod(node, mod) {
@@ -164,13 +164,16 @@ export default class Agents extends View {
         const now = Date.now();
         const scan = now >= this.nextProcessScan;
         const askTmux = now >= this.tmuxRetry;
-        const [ps, tmux] = await Promise.allSettled([
+        const [ps, comm, tmux] = await Promise.allSettled([
           scan ? exec("ps", PS_ARGS, { timeout: 2500 }) : null,
+          scan ? exec("ps", PS_COMM_ARGS, { timeout: 2500 }) : null,
           askTmux ? exec("tmux", TMUX_PANE_ARGS, { timeout: 2000 }) : null,
         ]);
         if (scan) {
           this.nextProcessScan = now + 4500;
-          if (ps.status === "fulfilled" && ps.value?.code === 0) this.processes = parseProcesses(ps.value.stdout);
+          if (ps.status === "fulfilled" && ps.value?.code === 0) {
+            this.processes = parseProcesses(ps.value.stdout, comm.status === "fulfilled" && comm.value?.code === 0 ? comm.value.stdout : "");
+          }
         }
         if (askTmux) {
           const result = tmux.status === "fulfilled" ? tmux.value : null;
