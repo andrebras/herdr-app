@@ -687,3 +687,17 @@ test("a failed process read is tried again after a short pause, not 30 seconds",
   await discover();
   expect(agents.nextProcessScan - before).toBeGreaterThanOrEqual(30000);
 });
+
+test("a clicked or stepped-to row is selected at once and the list looks again soon", () => {
+  const { agents } = harness([]);
+  const now = Date.now();
+  agents.nextDiscovery = now + 1500;
+  agents.hold("detected-agent-20");
+  expect(agents.navigationCurrent).toBe("detected-agent-20");
+  expect(agents.navigationPending.address).toBe("detected-agent-20");
+  expect(agents.nextDiscovery - now).toBeLessThanOrEqual(300);
+  agents.followFocus("t1", now);
+  expect(agents.navigationCurrent).toBe("detected-agent-20");
+  agents.followFocus("detected-agent-20", now);
+  expect(agents.navigationPending).toBeNull();
+});

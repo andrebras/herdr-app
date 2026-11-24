@@ -115,6 +115,7 @@ export default class Agents extends View {
     this.nextProcessScan = 0;
     this.paneCommands = "";
     this.tmuxRetry = 0;
+    this.nextDiscovery = 0;
     // The app's program table names and draws detected agents, like tracked ones.
     // The New menu keeps the last answer in shared storage, so names show at once.
     this.catalog = new Map((shared("new-menu.agents")?.[""] ?? []).map(p => [p.key, p]));
@@ -124,10 +125,13 @@ export default class Agents extends View {
       const poll = cx => {
         const win = window();
         // tmux and ps are Unix tools; Windows has neither, so nothing is polled there.
-        if (win?.visible && ["linux", "macos"].includes(win.platform)) this.discover(cx);
+        if (!win?.visible || !["linux", "macos"].includes(win.platform) || Date.now() < this.nextDiscovery) return;
+        this.nextDiscovery = Date.now() + 1500;
+        this.discover(cx);
       };
       poll(cx);
-      cx.timer.every(1500, poll);
+      // Ticks are cheap; discovery runs every 1.5 s, or sooner after a click or key.
+      cx.timer.every(250, poll);
       this.loadCatalog(cx);
       // A failed check is not cached, so try again until one answers.
       cx.timer.every(30000, cx => this.loadCatalog(cx));
@@ -147,10 +151,16 @@ export default class Agents extends View {
     else if (command === "previous-agent") target = list[index < 0 ? list.length - 1 : (index + list.length - 1) % list.length];
     else if (select) target = list[Number(select[1]) - 1];
     if (!target) return;
-    this.navigationCurrent = target.address;
-    // Focus reaches the list late for tmux rows, so hold the target until it does.
-    this.navigationPending = { address: target.address, until: Date.now() + 3000 };
+    this.hold(target.address);
     target.navigate();
+  }
+
+  // Focus reaches the list late for tmux rows: show the target as selected at
+  // once, hold it until focus confirms it, and look again soon.
+  hold(address) {
+    this.navigationCurrent = address;
+    this.navigationPending = { address, until: Date.now() + 3000 };
+    this.nextDiscovery = Math.min(this.nextDiscovery ?? 0, Date.now() + 300);
   }
 
   followFocus(address, now = Date.now()) {
@@ -251,7 +261,11 @@ export default class Agents extends View {
     const pinKey = tmux?.start ? JSON.stringify([tmux.server, tmux.start, tmux.pane, agent.name]) : null;
     const context = contexts.get(agent.pane);
     const address = `detected-agent-${agent.pid}`;
-    const activate = () => this.focusDetected(agent);
+    const activate = (_e, cx) => {
+      this.hold(address);
+      this.focusDetected(agent);
+      cx?.notify();
+    };
     return {
       address, rowId: address, reported: false, focused: agent.pid === selected,
       group: tmux ? `tmux-${tmux.server}-${tmux.session}` : context?.space ?? "local-external",
@@ -497,7 +511,7 @@ export default class Agents extends View {
         program: a.program, focused: a.focused,
         machine: a.address.includes("/") ? a.address.split("/")[0] : null,
         pinned: a.pinned, pin: pinned => run("terminal.pin", { terminal: a.address, pinned }),
-        activate: () => run("pane.focus", { pane: a.pane }),
+        activate: () => { this.navigationPending = null; run("pane.focus", { pane: a.pane }); },
         navigate: () => run("agent.focus", { terminal: a.address }),
         children: collapsed ? [] : children,
       };
@@ -533,6 +547,7 @@ export default class Agents extends View {
     const ordered = groups.flatMap(g => g.members);
     this.navigation = ordered.filter(a => a.navigate);
     this.followFocus(this.navigation.find(a => a.focused)?.address ?? shown, now);
+    if (this.navigationPending) for (const a of ordered) a.focused = a.address === this.navigationPending.address;
     const navigationIndices = new Map(this.navigation.map((a, i) => [a.address, i + 1]));
     setAgentOrder(ordered.filter(a => a.reported).map(a => a.address),
       this.navigation.some(a => !a.reported) ? this.navigation.length : undefined);
