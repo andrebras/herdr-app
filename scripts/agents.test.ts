@@ -1,13 +1,14 @@
 import { test, expect } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents } from "../defaults/mods/agents/discovery.js";
+import { parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "../defaults/mods/agents/discovery.js";
 import { macTerminalDevice, revealTerminalArgs } from "../defaults/mods/agents/external.js";
 
 const source = (await readFile(new URL("../defaults/mods/agents/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "").replace("export default class Agents", "class Agents");
 
 function harness(pins: string[], overrides: Record<string, unknown> = {}) {
-  const globals = { focusedTmux, detectedAgents, macTerminalDevice, revealTerminalArgs, ...overrides };
+  const globals = { focusedTmux, detectedAgents, selectedDetectedAgent, macTerminalDevice, revealTerminalArgs,
+    ScrollHandle: { new: () => ({ scroll_to_item() {} }) }, ...overrides };
   const data = new Map([["pins", JSON.stringify(pins)]]);
   const writes: unknown[] = [];
   const storage = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => data.set(k, v), removeItem: (k: string) => data.delete(k) };
@@ -361,11 +362,11 @@ test("links detected processes to the current tmux session and identifies the se
     "900\t$0\t@3\t%4\t10\t0\tdataforge\t1\t0\tReview",
     "900\t$2\t@3\t%4\t10\t0\tlinked\t2\t1\tReview",
     "900\t$2\t@8\t%9\t30\t1\tdead\t3\t0\tDead",
-    "client\t55\t900\t$2\t%4",
+    "client\t55\t900\t$2\t%4\t@3",
   ].join("\n");
   const terminals = [{ address: "t1", pid: 54, foreground: { pid: 55 } }, { address: "t2", pid: 31, status: "idle" }];
   const selected = focusedTmux(parseTmuxClients(output), terminals, "t1");
-  expect(selected).toEqual({ server: "900", session: "$2", pane: "%4" });
+  expect(selected).toEqual({ server: "900", session: "$2", pane: "%4", window: "@3" });
   expect(focusedTmux(parseTmuxClients(output), terminals, "remote/t1")).toBeNull();
   const found = detectedAgents(processes, parseTmuxPanes(output), terminals, [], [{ address: "t2" }], selected);
   expect(found.map(agent => [agent.pid, agent.name, agent.tmux?.label, agent.tmux?.detail, agent.tty])).toEqual([
@@ -383,7 +384,7 @@ test("tmux rows highlight and target the exact pane, and external rows open deta
   });
   const t = { selected: "#selected" };
   const target = { server: "900", session: "$2", window: "@3", pane: "%4", label: "dataforge", detail: "2.1 · Review" };
-  const native = agents.detectedRow(t, { pid: 20, name: "Codex", tmux: target }, false, target).node;
+  const native = agents.detectedRow(t, { pid: 20, name: "Codex", tmux: target }, false, true).node;
   expect(native.bg).toBe(t.selected);
   expect(textOf(native)).toContain("dataforge 2.1 · Review");
   native.click();
@@ -399,4 +400,56 @@ test("revealing a Mac terminal uses a validated terminal device argument", () =>
   expect(revealTerminalArgs("terminal", "??")).toBeNull();
   expect(revealTerminalArgs("terminal", "s003; whoami")).toBeNull();
   expect(revealTerminalArgs("iterm", "s003")?.at(-1)).toBe("/dev/ttys003");
+});
+
+test("a Spaces switch highlights the agent even when tmux is focused on the window's side pane", () => {
+  const processes = parseProcesses([
+    "55 54 s001 tmux      tmux attach",
+    "61 1 s010 zsh        /bin/zsh",
+    "62 61 s010 claude    claude --resume",
+    "71 1 s011 zsh        /bin/zsh",
+    "72 71 s011 codex     codex",
+  ].join("\n"));
+  const panes = parseTmuxPanes([
+    "900\t$0\t@1\t%4\t61\t0\tdataforge\t1\t0\tReview",
+    "900\t$1\t@2\t%6\t71\t0\trevolution\t1\t0\tBuild",
+  ].join("\n"));
+  const terminals = [{ address: "t1", pid: 54 }];
+  const reveal: number[] = [];
+  const { agents } = harness([], {
+    agents: () => [], terminals: () => terminals, panes: () => [], spaces: () => [],
+    focused: () => ({ terminal: "t1", pane: "p1" }),
+    layout: () => ({ id: "sidebar", size: { px: 268 } }), shared: () => null,
+    theme: () => ({ selected: "#selected" }), setAgentOrder() {},
+    div: element, v_flex: element, h_flex: element, svg: element, image: element,
+    ScrollHandle: { new: () => ({ scroll_to_item: (i: number) => reveal.push(i) }) },
+  });
+  agents.processes = processes;
+  agents.tmuxPanes = panes;
+  const selected = () => {
+    const rows = new Map<string, string>();
+    function walk(node: any) {
+      if (node?.id?.startsWith("detected-agent-")) rows.set(node.id, node.bg);
+      node?.children?.forEach(walk);
+    }
+    walk(agents.render({}).node);
+    return [...rows].filter(([, bg]) => bg === "#selected").map(([id]) => id);
+  };
+  agents.tmuxClients = parseTmuxClients("client\t55\t900\t$0\t%4\t@1");
+  expect(selected()).toEqual(["detected-agent-62"]);
+  agents.tmuxClients = parseTmuxClients("client\t55\t900\t$1\t%7\t@2");
+  expect(selected()).toEqual(["detected-agent-72"]);
+  expect(selected()).toEqual(["detected-agent-72"]);
+  expect(reveal).toEqual([1, 2]);
+});
+
+test("agent selection prefers the active pane then an unambiguous window or session", () => {
+  const agent = (pid: number, session: string, window: string, pane: string) => ({ pid, tmux: { server: "900", session, window, pane } });
+  const found = [agent(1, "$0", "@2", "%1"), agent(2, "$0", "@2", "%2"), agent(3, "$0", "@3", "%3"), agent(4, "$1", "@4", "%4")];
+  const active = (session: string, window: string, pane: string | null) => ({ server: "900", session, window, pane });
+  expect(selectedDetectedAgent(found, active("$0", "@2", "%1"), null)).toBe(1);
+  expect(selectedDetectedAgent(found, active("$0", "@2", "%9"), null)).toBeUndefined();
+  expect(selectedDetectedAgent(found, active("$0", "@3", null), null)).toBe(3);
+  expect(selectedDetectedAgent(found, active("$1", "@9", "%9"), null)).toBe(4);
+  expect(selectedDetectedAgent(found, active("$9", "@9", "%9"), null)).toBeUndefined();
 });

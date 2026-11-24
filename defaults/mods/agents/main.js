@@ -1,9 +1,9 @@
 // Agents in grouped or priority views; parents take their most urgent sub-agent's place.
 
 import { View, div, image, svg } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, exec } from "herdr";
-import { psArgs, tmuxPaneArgs, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents } from "./discovery.js";
+import { psArgs, tmuxPaneArgs, parseProcesses, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
 import { macTerminalDevice, revealTerminalArgs } from "./external.js";
 
 function layoutHasMod(node, mod) {
@@ -104,6 +104,7 @@ export default class Agents extends View {
     if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
+    this.scroll = ScrollHandle.new();
     this.processes = new Map();
     this.tmuxPanes = new Map();
     this.tmuxClients = new Map();
@@ -138,7 +139,8 @@ export default class Agents extends View {
         const tmuxPanes = parseTmuxPanes(tmuxOutput);
         const tmuxClients = parseTmuxClients(tmuxOutput);
         const all = terminals();
-        const active = focusedTmux(tmuxClients, all, focused()?.terminal);
+        const current = focused();
+        const active = focusedTmux(tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
         const found = detectedAgents(this.processes, tmuxPanes, all, panes(), agents(), active);
         const key = JSON.stringify([found, active]);
         this.tmuxPanes = tmuxPanes;
@@ -153,13 +155,10 @@ export default class Agents extends View {
     });
   }
 
-  detectedRow(t, agent, collapsed, active, focusedPane) {
+  detectedRow(t, agent, collapsed, selected) {
     const { tmux, pane } = agent;
     const location = tmux?.label || (pane ? "Herdr" : "This computer");
     const spacesMod = props()?.tmuxSpacesMod ?? "spaces";
-    const selected = tmux
-      ? active?.server === tmux.server && active?.session === tmux.session && active?.pane === tmux.pane
-      : Boolean(pane && pane === focusedPane);
     const [imageName, tint] = detectedIcons.get(agent.name) ?? ["agent", true];
     const details = tmux?.detail || agent.tty || `PID ${agent.pid}`;
     return h_flex().id(`detected-agent-${agent.pid}`).h(collapsed ? 26 : 30).px(collapsed ? 0 : 8)
@@ -366,8 +365,9 @@ export default class Agents extends View {
     const all = terminals();
     const allPanes = panes();
     const current = focused();
-    const tmuxActive = focusedTmux(this.tmuxClients, all, current?.terminal);
+    const tmuxActive = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
     const detected = detectedAgents(this.processes, this.tmuxPanes, all, allPanes, list, tmuxActive);
+    const selected = selectedDetectedAgent(detected, tmuxActive, current?.pane);
     this.migratePins(all);
     const shown = current?.agent;
     const now = Date.now();
@@ -544,6 +544,7 @@ export default class Agents extends View {
         .text_size(11)
         .font_medium()
         .cursor_pointer()
+        .when(!open && g.selected, el => el.bg(t.selected))
         .hover((s) => s.text_color(t.foreground))
         .on_click((_e, cx) => {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
@@ -559,10 +560,20 @@ export default class Agents extends View {
     const rows = collapsed
       ? list.flatMap(withKids)
       : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
+    let selectedAt = -1;
     if (detected.length) {
-      const group = { id: "detected-agents", label: "Detected", status: null, members: detected };
+      const group = { id: "detected-agents", label: "Detected", status: null, members: detected, selected: selected !== undefined };
+      const show = collapsed || !this.folded.has(group.id);
+      if (group.selected) selectedAt = show
+        ? rows.length + (collapsed ? 0 : 1) + detected.findIndex(a => a.pid === selected)
+        : rows.length;
       if (!collapsed) rows.push(header(group));
-      if (collapsed || !this.folded.has(group.id)) rows.push(...detected.map(a => this.detectedRow(t, a, collapsed, tmuxActive, current?.pane)));
+      if (show) rows.push(...detected.map(a => this.detectedRow(t, a, collapsed, a.pid === selected)));
+    }
+    if (selected !== this.selectedDetected || selectedAt !== this.selectedAt) {
+      this.selectedDetected = selected;
+      this.selectedAt = selectedAt;
+      if (selectedAt >= 0) this.scroll.scroll_to_item(selectedAt);
     }
 
     return v_flex()
@@ -598,7 +609,7 @@ export default class Agents extends View {
       .when(list.length === 0 && detected.length === 0 && !collapsed, (el) =>
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agents detected yet.")),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
+      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").track_scroll(this.scroll).children(rows))
       .when(collapsed, (el) =>
         el.child(
           h_flex()

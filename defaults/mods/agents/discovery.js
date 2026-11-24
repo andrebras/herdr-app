@@ -3,7 +3,7 @@
 export const psArgs = ["-xww", "-o", "pid=", "-o", "ppid=", "-o", "tty=", "-o", "comm=", "-o", "args="];
 export const tmuxPaneArgs = ["-u", "-L", "default", "list-panes", "-a", "-F",
   "#{pid}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{session_name}\t#{window_index}\t#{pane_index}\t#{window_name}",
-  ";", "list-clients", "-F", "client\t#{client_pid}\t#{pid}\t#{session_id}\t#{pane_id}"];
+  ";", "list-clients", "-F", "client\t#{client_pid}\t#{pid}\t#{session_id}\t#{pane_id}\t#{window_id}"];
 
 const names = new Map([
   ["claude", "Claude Code"], ["claude-code", "Claude Code"],
@@ -67,18 +67,50 @@ export function parseTmuxPanes(stdout) {
 export function parseTmuxClients(stdout) {
   const clients = new Map();
   for (const line of stdout.split("\n")) {
-    const [kind, pid, server, session, pane] = line.split("\t");
-    if (kind === "client" && /^\d+$/.test(pid) && /^\d+$/.test(server) && /^\$\d+$/.test(session) && /^%\d+$/.test(pane)) {
-      clients.set(Number(pid), { server, session, pane });
-    }
+    const [kind, pid, server, session, pane, window] = line.split("\t");
+    if (kind !== "client" || !/^\d+$/.test(pid) || !/^\d+$/.test(server) || !/^\$\d+$/.test(session)) continue;
+    clients.set(Number(pid), {
+      server, session, pane: /^%\d+$/.test(pane) ? pane : null, window: /^@\d+$/.test(window) ? window : null,
+    });
   }
   return clients;
 }
 
-export function focusedTmux(clients, terminals, address) {
+function* ancestors(processes, pid) {
+  const seen = new Set([pid]);
+  for (let parent = processes.get(pid)?.parent; parent > 0 && !seen.has(parent); parent = processes.get(parent)?.parent) {
+    seen.add(parent);
+    yield parent;
+  }
+}
+
+export function focusedTmux(clients, terminals, address, processes) {
   if (!address || address.includes("/")) return null;
   const terminal = terminals.find(t => t.address === address);
-  return clients.get(terminal?.foreground?.pid) ?? clients.get(terminal?.pid) ?? null;
+  const direct = clients.get(terminal?.foreground?.pid) ?? clients.get(terminal?.pid);
+  if (direct || !terminal || !processes) return direct ?? null;
+  // Some shells and launch wrappers own the process group while tmux is a
+  // child of that group. Only use a descendant if it identifies one client.
+  const roots = new Set([terminal.foreground?.pid, terminal.pid]);
+  const matches = [...clients].filter(([pid]) => {
+    for (const parent of ancestors(processes, pid)) if (roots.has(parent)) return true;
+    return false;
+  });
+  return matches.length === 1 ? matches[0][1] : null;
+}
+
+export function selectedDetectedAgent(agents, active, herdrPane) {
+  if (!active) {
+    return herdrPane ? agents.find(a => !a.tmux && a.pane === herdrPane)?.pid : undefined;
+  }
+  const session = agents.filter(a => a.tmux?.server === active.server && a.tmux.session === active.session);
+  const pane = session.filter(a => a.tmux.pane === active.pane);
+  if (pane.length) return pane.length === 1 ? pane[0].pid : undefined;
+  // A tmux window may leave its shell or a work sidebar focused. In that
+  // case select the agent only when the window or session identifies it.
+  const window = session.filter(a => a.tmux.window === active.window);
+  if (window.length) return window.length === 1 ? window[0].pid : undefined;
+  return session.length === 1 ? session[0].pid : undefined;
 }
 
 export function detectedAgents(processes, tmuxPanes, terminals, herdrPanes, tracked, selected) {
@@ -100,12 +132,10 @@ export function detectedAgents(processes, tmuxPanes, terminals, herdrPanes, trac
   for (const [pid, process] of processes) {
     if (!process.name) continue;
     let tmux = tmuxPanes.get(pid), owner = owned.get(pid), nested = false;
-    const seen = new Set([pid]);
-    for (let parent = process.parent; processes.has(parent) && !seen.has(parent); parent = processes.get(parent).parent) {
-      seen.add(parent);
+    for (const parent of ancestors(processes, pid)) {
       tmux ??= tmuxPanes.get(parent);
       owner ??= owned.get(parent);
-      if (processes.get(parent).name === process.name) { nested = true; break; }
+      if (processes.get(parent)?.name === process.name) { nested = true; break; }
     }
     if (!nested && (tmux || !owner?.tracked || (owner.name && owner.name !== process.name))) {
       const target = tmux?.find(t => t.server === selected?.server && t.session === selected.session) ?? tmux?.[0];

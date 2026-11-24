@@ -978,7 +978,8 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
 
 - The Agents sidebar on macOS and Linux lists recognised local agent processes
   under Detected when their status is unavailable. A row shows the tmux session,
-  window and pane position and follows the selected pane. External rows open
+  window and pane position. After a tmux switch, selection follows the active
+  pane or the only agent in the active window or session. External rows open
   process details and can reveal matching Terminal or iTerm2 tabs on macOS
   when Automation is available. The footer counts agents reporting status.
 
