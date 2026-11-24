@@ -812,18 +812,28 @@ pub fn send_command_to(copy: u64, command: &str) -> bool {
     })
 }
 
+/// A step through the agent list: the next or previous agent, or one by position (1 = first).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentStep {
+    Next,
+    Previous,
+    Select(u64),
+}
+
 /// A visible agent list can handle navigation when it also has external targets.
 /// The native terminal order is the fallback when that list is not shown.
-pub fn navigate_agent(command: &str, index: Option<u64>) -> Option<bool> {
+pub fn navigate_agent(step: AgentStep) -> Option<bool> {
     // The latest shown copy wins, so hiding one copy hands keys to another shown one.
     let (copy, count) = AGENT_NAVIGATORS.with_borrow(|navigators| {
         SHOWN_COPIES.with_borrow(|shown| navigators.iter().rev().find(|(copy, _)| shown.contains(copy)).copied())
     })?;
-    if index.is_some_and(|i| i > count) {
-        return Some(false);
-    }
-    let selection = index.map(|i| format!("select-agent-{i}"));
-    send_command_to(copy, selection.as_deref().unwrap_or(command)).then_some(true)
+    let command = match step {
+        AgentStep::Next => "next-agent".to_owned(),
+        AgentStep::Previous => "previous-agent".to_owned(),
+        AgentStep::Select(i) if i > count => return Some(false),
+        AgentStep::Select(i) => format!("select-agent-{i}"),
+    };
+    send_command_to(copy, &command).then_some(true)
 }
 
 /// The copies on screen now (`prepare_load` numbers them).
@@ -2074,13 +2084,13 @@ mod tests {
         COMMANDS.with_borrow_mut(|ports| ports.push((copy, "agents".into(), tx)));
         AGENT_NAVIGATORS.set(vec![(copy, 2)]);
         set_shown_copies(Default::default());
-        assert_eq!(navigate_agent("next-agent", None), None);
+        assert_eq!(navigate_agent(AgentStep::Next), None);
         set_shown_copies([copy].into_iter().collect());
-        assert_eq!(navigate_agent("next-agent", None), Some(true));
+        assert_eq!(navigate_agent(AgentStep::Next), Some(true));
         assert_eq!(rx.try_recv().unwrap(), "next-agent");
-        assert_eq!(navigate_agent("", Some(2)), Some(true));
+        assert_eq!(navigate_agent(AgentStep::Select(2)), Some(true));
         assert_eq!(rx.try_recv().unwrap(), "select-agent-2");
-        assert_eq!(navigate_agent("", Some(3)), Some(false));
+        assert_eq!(navigate_agent(AgentStep::Select(3)), Some(false));
         assert!(rx.try_recv().is_err());
         AGENT_NAVIGATORS.set(Vec::new());
         set_shown_copies(Default::default());
@@ -2095,14 +2105,14 @@ mod tests {
         COMMANDS.with_borrow_mut(|ports| ports.extend([(first, "agents".into(), tx1), (second, "agents".into(), tx2)]));
         AGENT_NAVIGATORS.set(vec![(first, 2), (second, 3)]);
         set_shown_copies([first, second].into_iter().collect());
-        assert_eq!(navigate_agent("next-agent", None), Some(true));
+        assert_eq!(navigate_agent(AgentStep::Next), Some(true));
         assert_eq!(rx2.try_recv().unwrap(), "next-agent");
         set_shown_copies([first].into_iter().collect());
-        assert_eq!(navigate_agent("next-agent", None), Some(true));
+        assert_eq!(navigate_agent(AgentStep::Next), Some(true));
         assert_eq!(rx1.try_recv().unwrap(), "next-agent");
-        assert_eq!(navigate_agent("", Some(3)), Some(false));
+        assert_eq!(navigate_agent(AgentStep::Select(3)), Some(false));
         set_shown_copies(Default::default());
-        assert_eq!(navigate_agent("next-agent", None), None);
+        assert_eq!(navigate_agent(AgentStep::Next), None);
         AGENT_NAVIGATORS.set(Vec::new());
         COMMANDS.with_borrow_mut(|ports| ports.retain(|(id, _, _)| *id != first && *id != second));
     }
