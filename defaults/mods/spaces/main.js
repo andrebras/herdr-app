@@ -201,7 +201,7 @@ export default class Spaces extends View {
           session = this.tmux.sessions.find(s => s.id === session.id && s.server === session.server && (!session.socket || s.socket === session.socket));
           if (!session) throw new Error("That tmux session has ended.");
         } else {
-          const current = spaces().find(s => s.active);
+          const current = workspaces.find(s => s.active);
           let folder = current?.machine ? home() : at?.cwd || current?.folder || home();
           const activeSession = client?.address === (at?.shown ?? at?.terminal)
             ? this.tmux.sessions.find(s => s.id === client?.session)
