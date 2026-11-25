@@ -193,14 +193,10 @@ test("a mod's panel gets a button once Herdr adds it; others and malformed ones 
   expect(find(bar, "panel-panel-later")).toBeNull();
 });
 
-test("a mod's panel button shows and hides the side panel, as Files does", async () => {
+test("a mod's panel button toggles the side panel on its panel, as Files does", async () => {
   state.files = { "/home/mods/tempo/mod.json": JSON.stringify({ panel: { title: "Tempo" } }) };
   const view = await panels();
   state.layout = sidePanel(true, "files");
   click(view, "panel-panel-tempo");
-  expect(runs).toEqual([["layout.select", { stack: "panel-body", child: "panel-tempo" }], ["layout.show", { id: "panel" }]]);
-  runs.length = 0;
-  state.layout = sidePanel(false, "panel-tempo");
-  click(view, "panel-panel-tempo");
-  expect(runs).toEqual([["layout.hide", { id: "panel" }]]);
+  expect(runs).toEqual([["layout.toggle", { id: "panel", stack: "panel-body", child: "panel-tempo" }]]);
 });

@@ -681,6 +681,24 @@ impl Node {
         }
     }
 
+    /// What a side panel's button does: shows `id` on `child` of `stack` (inside it), or
+    /// hides `id` when it already shows that child. False when there's no such node.
+    pub fn toggle_on(&mut self, id: &str, stack: &str, child: &str) -> bool {
+        let Some(node) = self.find(id) else { return false };
+        let Some(s) = node.find(stack) else { return false };
+        if !s.children().iter().any(|c| c.id == child) {
+            return false;
+        }
+        let showing = !node.hidden && s.active_child().is_some_and(|c| c.id == child);
+        if showing {
+            self.find_mut(id).unwrap().hidden = true;
+        } else {
+            self.select(stack, child);
+            self.reveal(stack);
+        }
+        true
+    }
+
     /// The visible child of a stack.
     pub fn active_child(&self) -> Option<&Node> {
         match &self.kind {
@@ -975,6 +993,23 @@ mod tests {
         root.reveal("s");
         assert!(!root.find("panel").unwrap().hidden && !root.find("s").unwrap().hidden);
         assert!(root.find("main").unwrap().hidden, "siblings stay as they were");
+    }
+
+    #[test]
+    fn toggling_on_a_child_shows_switches_then_hides() {
+        let stack = Node::new("s", Kind::Stack { children: vec![term("a"), term("b")], active: None, header: None });
+        let mut panel = Node::container("panel", Axis::Column, vec![stack]);
+        panel.hidden = true;
+        let mut root = Node::container("r", Axis::Row, vec![term("main"), panel]);
+        let shown = |r: &Node| (!r.find("panel").unwrap().hidden).then(|| r.find("s").unwrap().active_child().unwrap().id.clone());
+        assert!(root.toggle_on("panel", "s", "b"));
+        assert_eq!(shown(&root).as_deref(), Some("b"), "hidden: shows it on that child");
+        root.select("s", "a");
+        assert!(root.toggle_on("panel", "s", "b"));
+        assert_eq!(shown(&root).as_deref(), Some("b"), "on another child: switches");
+        assert!(root.toggle_on("panel", "s", "b"));
+        assert_eq!(shown(&root), None, "already on it: hides");
+        assert!(!root.toggle_on("panel", "s", "nope") && !root.toggle_on("main", "s", "a"));
     }
 
     #[test]

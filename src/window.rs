@@ -3652,6 +3652,13 @@ impl AppWindow {
                 }
                 Err(e) => return self.fail(format!("layout: {e}")),
             },
+            "layout.toggle" if a.get("stack").is_some() || a.get("child").is_some() => {
+                let id = Self::arg(a, "id").unwrap_or_default();
+                let (s, ch) = (Self::arg(a, "stack").unwrap_or_default(), Self::arg(a, "child").unwrap_or_default());
+                if !self.chrome.toggle_on(id, s, ch) {
+                    return self.fail(format!("no node {id:?} with a stack {s:?} and a child {ch:?} in the shown layout"));
+                }
+            }
             "layout.toggle" | "layout.show" | "layout.hide" => {
                 let id = Self::arg(a, "id").unwrap_or_default();
                 let Some(n) = self.chrome.find_mut(id) else { return self.fail(format!("no node {id:?} in the shown layout")) };
