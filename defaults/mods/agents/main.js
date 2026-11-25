@@ -206,10 +206,7 @@ export default class Agents extends View {
           // A failed read is tried again soon, so a starting agent isn't missed for 30 s.
           this.nextProcessScan = now + (ps?.code === 0 ? 30000 : 4500);
         }
-        const all = terminals();
-        const current = focused();
-        const active = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
-        const found = detectedAgents(this.processes, this.tmuxPanes, all, panes(), agents(), active);
+        const { active, found } = this.detection();
         const key = JSON.stringify([found, active]);
         if (key !== this.discoveryKey) {
           this.discoveryKey = key;
@@ -219,6 +216,13 @@ export default class Agents extends View {
         this.discovering = false;
       }
     });
+  }
+
+  // The tmux pane in front and the agents found outside Herdr; discover() and
+  // render() both use it, so the change check matches what the list shows.
+  detection(all = terminals(), allPanes = panes(), tracked = agents(), current = focused()) {
+    const active = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
+    return { active, found: detectedAgents(this.processes, this.tmuxPanes, all, allPanes, tracked, active) };
   }
 
   focusDetected(agent) {
@@ -475,8 +479,7 @@ export default class Agents extends View {
     const all = terminals();
     const allPanes = panes();
     const current = focused();
-    const tmuxActive = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
-    const detected = detectedAgents(this.processes, this.tmuxPanes, all, allPanes, list, tmuxActive);
+    const { active: tmuxActive, found: detected } = this.detection(all, allPanes, list, current);
     const selected = selectedDetectedAgent(detected, tmuxActive, current?.pane);
     this.migratePins(all);
     const shown = current?.agent;
