@@ -1056,6 +1056,9 @@ impl AppWindow {
         } else {
             fill_ids(&mut chrome, &mut self.model);
         }
+        if shipped_layouts().contains(&name) {
+            add_panels(&mut chrome, &panel_mods(&self.folders));
+        }
         self.file_chrome = chrome.clone();
         let mut state = read_state(name);
         if self.layout_file_ok {
@@ -1132,6 +1135,9 @@ impl AppWindow {
                 let was_broken = !self.layout_file_ok;
                 self.layout_file_ok = true;
                 self.keep_ids(&mut n);
+                if shipped_layouts().contains(&self.layout_name.as_str()) {
+                    add_panels(&mut n, &panel_mods(&self.folders));
+                }
                 // What the file now sets on purpose wins over a click on it.
                 // Coming back from a broken file, the clicks are the saved ones
                 // (what showed meanwhile was only the shipped stand-in).
@@ -3636,6 +3642,13 @@ impl AppWindow {
                 }
                 Err(e) => return self.fail(format!("layout: {e}")),
             },
+            "layout.toggle" if a.get("stack").is_some() || a.get("child").is_some() => {
+                let id = Self::arg(a, "id").unwrap_or_default();
+                let (s, ch) = (Self::arg(a, "stack").unwrap_or_default(), Self::arg(a, "child").unwrap_or_default());
+                if !self.chrome.toggle_on(id, s, ch) {
+                    return self.fail(format!("no node {id:?} with a stack {s:?} and a child {ch:?} in the shown layout"));
+                }
+            }
             "layout.toggle" | "layout.show" | "layout.hide" => {
                 let id = Self::arg(a, "id").unwrap_or_default();
                 let Some(n) = self.chrome.find_mut(id) else { return self.fail(format!("no node {id:?} in the shown layout")) };
@@ -3678,6 +3691,10 @@ impl AppWindow {
                 let (s, ch) = (Self::arg(a, "stack").unwrap_or_default(), Self::arg(a, "child").unwrap_or_default());
                 if !self.chrome.select(s, ch) {
                     return self.fail(format!("no stack {s:?} with a child {ch:?}"));
+                }
+                // One step from a palette entry or a key: the stack and whatever hides it show too.
+                if a.get("show").and_then(Value::as_bool) == Some(true) {
+                    self.chrome.reveal(s);
                 }
             }
             "mod.open" => {
@@ -4531,6 +4548,12 @@ impl AppWindow {
         }
         if self.seen.len() != seen_before {
             write_atomic(&file("seen.json"), &serde_json::to_string(&self.seen).unwrap_or_default());
+        }
+        // Panel mods come and go with their folders, in the file's tree and the shown one alike.
+        if shipped {
+            let panels = panel_mods(&self.folders);
+            add_panels(&mut self.file_chrome, &panels);
+            layout_changed |= add_panels(&mut self.chrome, &panels);
         }
         if !retry.is_empty() || added || removed || layout_changed || self.unseen_link_handlers().next().is_some() {
             self.sync(window, cx);
@@ -5491,6 +5514,31 @@ fn visible_nodes(n: &Node) -> Vec<&Node> {
 
 fn fill_ids(n: &mut Node, m: &mut Model) {
     n.fill_ids(&mut || m.fresh_id("n"));
+}
+
+/// Mods whose mod.json asks for a side panel.
+fn panel_mods(folders: &BTreeMap<String, Found>) -> Vec<String> {
+    folders.iter().filter(|(_, f)| f.has_view && f.hint.panel.as_ref().is_some_and(Value::is_object)).map(|(id, _)| id.clone()).collect()
+}
+
+/// Shows each panel mod in the layout's side panel (its "panel-body" stack) as
+/// `panel-<mod>`, after the panels the layout has, and drops ones whose mod is gone.
+/// Herdr's own layouts only: the blocks are never written to a file. Returns whether
+/// the tree changed.
+fn add_panels(root: &mut Node, mods: &[String]) -> bool {
+    let Some(stack) = root.find_mut("panel-body") else { return false };
+    let Kind::Stack { children, .. } = &mut stack.kind else { return false };
+    let id = |m: &str| format!("panel-{m}");
+    let before = children.len();
+    children.retain(|c| !c.id.starts_with("panel-") || mods.iter().any(|m| id(m) == c.id));
+    let mut changed = children.len() != before;
+    for m in mods {
+        if !children.iter().any(|c| c.id == id(m)) {
+            children.push(Node::block(id(m), Content::Mod { name: m.clone(), props: Value::Null }));
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Puts a block along one side of the chrome.
@@ -8319,6 +8367,23 @@ export default class Probe extends View { render() { return div().child("probe")
         assert!(!super::busy(&rec("done", false, true)), "an agent started from a shell, its turn over");
         assert!(super::busy(&rec("", false, false)), "vim in front of the shell");
         assert!(!super::busy(&rec("", true, false)), "the shell's prompt");
+    }
+
+    #[test]
+    fn panel_mods_join_the_side_panel_and_leave_with_their_folder() {
+        let mut main = super::default_layout("main");
+        let kids = |n: &super::Node| n.find("panel-body").unwrap().children().iter().map(|c| c.id.clone()).collect::<Vec<_>>();
+        assert!(super::add_panels(&mut main, &["tempo".into()]));
+        assert_eq!(kids(&main), ["files", "changes", "panel-tempo"]);
+        assert!(matches!(main.find("panel-tempo").unwrap().content(), Some(super::Content::Mod { name, .. }) if name == "tempo"));
+        assert!(!super::add_panels(&mut main, &["tempo".into()]), "adding again changes nothing");
+        assert!(main.select("panel-body", "panel-tempo"));
+        assert!(super::add_panels(&mut main, &[]));
+        assert_eq!(kids(&main), ["files", "changes"]);
+        // The stack falls back to its first panel when the shown one's mod is gone.
+        assert_eq!(main.find("panel-body").unwrap().active_child().unwrap().id, "files");
+        let mut terminals = super::default_layout("terminals");
+        assert!(!super::add_panels(&mut terminals, &["tempo".into()]), "no side panel, nothing to add");
     }
 
     #[test]

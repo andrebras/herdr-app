@@ -354,6 +354,10 @@ pub struct Hint {
     /// `pane.go` can give it the keyboard.
     #[serde(default)]
     pub focusable: bool,
+    /// `{title, icon?}`: Herdr's own layouts show it in the side panel, beside Files
+    /// and Changes, with a tab-bar button.
+    #[serde(default)]
+    pub panel: Option<Value>,
 }
 
 fn parse_link_rules(source: &std::io::Result<String>, link_manifest: bool) -> Result<Vec<links::Rule>, String> {
@@ -1468,8 +1472,9 @@ fn mod_policy(inst: &Instance) -> (u64, gpui_shell::policy::Policy) {
     };
     let policy = gpui_shell::policy::Policy::new()
         .with_application(inst.key())
-        // The shipped palette reads manifests even when the app home is outside the login home.
-        .with_capabilities(capabilities_at(home(), app_dir(), inst.name == "frame-palette"))
+        // The shipped palette and tab bar read manifests even when the app home is outside the
+        // login home.
+        .with_capabilities(capabilities_at(home(), app_dir(), matches!(inst.name.as_str(), "frame-palette" | "tabs")))
         .with_shared_storage_path(dir.join(file))
         .with_host_module(module(inst.clone(), copy))
         .expect("herdr module is valid");

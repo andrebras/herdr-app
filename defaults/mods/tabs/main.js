@@ -1,6 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
+import { readdir, readFile } from "fs/promises";
+import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, appHome, checking, watchFolder } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -9,6 +10,29 @@ function find(node, id) {
     if (found) return found;
   }
   return null;
+}
+
+// The `panel` of each mods/<name>/mod.json: { mod, title, icon }. Herdr adds such a mod
+// to the side panel as `panel-<name>`, beside Files and Changes. Unreadable or malformed
+// ones are skipped.
+async function modPanels() {
+  const dir = `${appHome()}/mods`;
+  let names;
+  try {
+    names = (await readdir(dir)).filter((n) => !n.startsWith(".")).sort();
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const mod of names) {
+    try {
+      const p = JSON.parse(await readFile(`${dir}/${mod}/mod.json`, "utf8")).panel;
+      if (!p || typeof p !== "object" || typeof p.title !== "string" || !p.title.trim()) continue;
+      const icon = typeof p.icon === "string" && /^[\w.-]+\.svg$/.test(p.icon) ? `mods/${mod}/${p.icon}` : null;
+      found.push({ id: `panel-${mod}`, title: p.title.trim(), icon });
+    } catch {}
+  }
+  return found;
 }
 
 // Same as the agents mod: drops a status glyph, keeps a leading bracket or quote.
@@ -28,12 +52,26 @@ function label(tab, lead) {
 }
 
 export default class Tabs extends View {
-  init() {
+  init(_props, cx) {
+    if (!checking()) cx.spawn((cx) => this.watchPanels(cx));
     this.pressed = null;
     this.scroll = ScrollHandle.new();
     try { this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}"); } catch { this.panels = {}; }
     if (!this.panels || typeof this.panels !== "object" || Array.isArray(this.panels)) this.panels = {};
     this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
+    this.modPanels = [];
+  }
+
+  // Mods' own panels, reread when a file under mods/ changes.
+  async watchPanels(cx) {
+    for (;;) {
+      const found = await modPanels();
+      if (JSON.stringify(found) !== JSON.stringify(this.modPanels)) {
+        this.modPanels = found;
+        cx.notify();
+      }
+      await watchFolder(`${appHome()}/mods`);
+    }
   }
 
   // One tab per wheel notch. A touchpad or smooth-scrolling mouse sends many
@@ -130,16 +168,15 @@ export default class Tabs extends View {
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
     const enabled = shared("workspace.panels") ?? ["files", "changes"];
-    this.syncPanel(space, panel, body, enabled);
+    // Mods' panels show while Herdr has added them to the panel.
+    const mine = this.modPanels.filter((p) => body?.children?.some((c) => c.id === p.id));
+    this.syncPanel(space, panel, body, [...enabled, ...mine.map((p) => p.id)]);
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
       return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
         .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
-        .on_click(() => {
-          if (on) run("layout.hide", { id: "panel" });
-          else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
-        }).child(svg(icon).size(14)).child(label);
+        .on_click(() => run("layout.toggle", { id: "panel", stack: "panel-body", child: id })).when(Boolean(icon), el => el.child(svg(icon).size(14))).child(label);
     };
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
@@ -150,6 +187,7 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
+      .children(mine.map((p) => panelButton(p.id, p.title, p.icon)))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));

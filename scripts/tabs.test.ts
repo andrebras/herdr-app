@@ -22,13 +22,18 @@ class Element {
 const source = await readFile(new URL("../defaults/mods/tabs/main.js", import.meta.url), "utf8");
 const element = () => new Element();
 const commands: string[] = [];
+const runs: [string, unknown][] = [];
+const state: { panes: unknown[]; shared: Record<string, unknown>; files: Record<string, string>; layout: unknown } = { panes: [], shared: {}, files: {}, layout: null };
 const store: Record<string, string> = {};
 const values: Record<string, unknown> = {
   View: class {}, div: element, svg: element, image: element, h_flex: element,
   ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
   spaces: () => [{ id: "s1", active: true, tabs: [{ id: "t1", name: "a" }, { id: "t2", name: "b", active: true }, { id: "t3", name: "c" }] }],
-  panes: () => [], run(command: string) { commands.push(command); }, openOverlay() {}, theme: () => ({}),
-  window: () => null, shared: () => null, layout: () => null, settings: () => ({ zoom: 1 }),
+  panes: () => state.panes, run(command: string, args?: unknown) { commands.push(command); runs.push([command, args]); }, openOverlay() {}, theme: () => ({}),
+  window: () => null, shared: (key: string) => state.shared[key] ?? null, layout: () => state.layout, settings: () => ({ zoom: 1 }),
+  appHome: () => "/home", checking: () => true, watchFolder: () => new Promise(() => {}),
+  readdir: async () => [...new Set(Object.keys(state.files).map((f) => f.split("/")[3]))],
+  readFile: async (path: string) => { if (!(path in state.files)) throw new Error("missing"); return state.files[path]; },
   localStorage: { getItem: (key: string) => store[key] ?? null, setItem(key: string, value: string) { store[key] = value; } },
 };
 const Tabs = new Function(...Object.keys(values), source.replace(/^import .*;\n/gm, "").replace("export default class Tabs", "return class Tabs"))(...Object.values(values));
@@ -45,7 +50,7 @@ function wheel() {
     handler({ delta: { x: 0, y }, delta_lines: lines === undefined ? undefined : { x: 0, y: lines }, touch_phase });
   };
 }
-beforeEach(() => { commands.length = 0; });
+beforeEach(() => { commands.length = 0; runs.length = 0; Object.assign(state, { panes: [], shared: {}, files: {}, layout: null }); });
 // Bun runs every test file in one process: give the later ones the real clock.
 afterAll(() => setSystemTime());
 
@@ -139,4 +144,59 @@ test("a shell's title never replaces its tab's name", () => {
   expect(label({ name: "", named: false }, shell)).toBe("zsh");
   expect(label({ name: "notes", named: true }, shell)).toBe("notes");
   expect(label({ name: "", named: false }, undefined)).toBe("Terminal");
+});
+
+function find(el: Element, id: string): Element | null {
+  if (el.calls.id?.[0] === id) return el;
+  for (const node of el.nodes) {
+    const found = node instanceof Object && "nodes" in node ? find(node as Element, id) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
+async function panels() {
+  const view = new Tabs();
+  view.init();
+  view.watchPanels({ notify() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return view;
+}
+
+const click = (view: InstanceType<typeof Tabs>, id: string) => {
+  const button = find(view.render() as Element, id);
+  (button!.calls.on_click[0] as () => void)();
+};
+
+// Herdr's side panel with the tempo mod added to it, shown or hidden, on `active`.
+const sidePanel = (hidden: boolean, active: string) => ({
+  id: "root",
+  children: [{ id: "panel", hidden, children: [{ id: "panel-body", active, children: [{ id: "files" }, { id: "changes" }, { id: "panel-tempo" }] }] }],
+});
+
+test("a mod's panel gets a button once Herdr adds it; others and malformed ones don't", async () => {
+  state.files = {
+    "/home/mods/tempo/mod.json": JSON.stringify({ panel: { title: "Tempo", icon: "icon.svg" } }),
+    "/home/mods/later/mod.json": JSON.stringify({ panel: { title: "Later" } }),
+    "/home/mods/plain/mod.json": JSON.stringify({ place: "right" }),
+    "/home/mods/bad/mod.json": JSON.stringify({ panel: { title: "  ", icon: "../x.svg" } }),
+    "/home/mods/odd/mod.json": "{",
+  };
+  const view = await panels();
+  expect(view.modPanels).toEqual([
+    { id: "panel-later", title: "Later", icon: null },
+    { id: "panel-tempo", title: "Tempo", icon: "mods/tempo/icon.svg" },
+  ]);
+  state.layout = sidePanel(true, "files");
+  const bar = view.render() as Element;
+  expect(find(bar, "panel-panel-tempo")).not.toBeNull();
+  expect(find(bar, "panel-panel-later")).toBeNull();
+});
+
+test("a mod's panel button toggles the side panel on its panel, as Files does", async () => {
+  state.files = { "/home/mods/tempo/mod.json": JSON.stringify({ panel: { title: "Tempo" } }) };
+  const view = await panels();
+  state.layout = sidePanel(true, "files");
+  click(view, "panel-panel-tempo");
+  expect(runs).toEqual([["layout.toggle", { id: "panel", stack: "panel-body", child: "panel-tempo" }]]);
 });
