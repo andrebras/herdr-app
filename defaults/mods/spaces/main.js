@@ -734,6 +734,8 @@ export default class Spaces extends View {
   }
 
   compact({ w, i }, t, ownsTmux = false) {
+    // An agent that needs the person outranks the tmux chevron in the narrow rail.
+    const dot = !ownsTmux || glyph(w.status) === "●";
     return railCell(h_flex()
       .id(`space-${w.id}`)
       .relative()
@@ -746,8 +748,8 @@ export default class Spaces extends View {
       .when(!w.active, (el) => el.hover((s) => s.bg(t.hover)))
       .on_click(() => run("space.select", { id: w.id }))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
-      .when(!ownsTmux, el => el.child(div().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))))
-      .when(ownsTmux, el => el.child(div().absolute().right(-5).child(this.tmuxChevron(t, w.id)))));
+      .when(dot, el => el.child(div().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))))
+      .when(!dot, el => el.child(div().absolute().right(-5).child(this.tmuxChevron(t, w.id)))));
   }
 
   render() {

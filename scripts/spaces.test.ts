@@ -710,3 +710,12 @@ test("a new session's folder is passed to tmux literally, never as a format", ()
   const args = newSessionArgs("/work/#(touch pwned)/#Sprint", []);
   expect(args[args.indexOf("-c") + 1]).toBe("/work/##(touch pwned)/##Sprint");
 });
+
+test("in the narrow rail, the tmux host keeps its attention dot over the tmux chevron", () => {
+  for (const [status, dot] of [["blocked", true], ["done", true], ["working", false], ["idle", false]] as const) {
+    const h = harness();
+    h.view.compact({ w: { id: "s1", status, active: false }, i: 0 }, {}, true);
+    expect(h.labels.includes("●")).toBe(dot);
+    expect(h.ids.includes("space-tmux-toggle-s1")).toBe(!dot);
+  }
+});
