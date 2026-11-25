@@ -106,6 +106,7 @@ function element() {
       if (method === "id") node.id = args[0];
       if (method === "on_click") (node as any).click = args[0];
       if (method === "bg") (node as any).bg = args[0];
+      if (method === "tooltip") (node as any).tooltip = args[0];
       if (method === "child") node.children.push(args[0]?.node ?? args[0]);
       if (method === "children") node.children.push(...args[0].map((child: any) => child?.node ?? child));
       if (method === "when" && args[0]) args[1](el);
@@ -259,6 +260,7 @@ for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent unde
 });
 
 for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent keeps its own row where no tree shows it`, () => {
+  expect(keptRender(sort, { width: 44 }).ids).toContain("ag-t3"); // the rail draws no trees
   const pinned = keptRender(sort, { pinned: ["t3"] });
   expect(pinned.ids).toContain("ag-t3");
   expect(pinned.texts.get("ag-t1")).toContain("Task t1");
@@ -281,7 +283,7 @@ test("a kept sub-agent keeps its own done status; a pane-less one stays idle", (
   expect(kidStatus({ address: "t4", status: "working" }, listed)).toBe("working");
 });
 
-test("the focused agent's row is marked as selected", () => {
+for (const width of [268, 44]) test(`the focused agent's row is marked as selected ${width < 160 ? "in the rail" : "in the wide list"}`, () => {
   const program = { name: "Claude", key: "claude", agent: true };
   const list = ["t1", "t2"].map((address, i) => ({
     address, pane: `p-${address}`, tab: address, space: "s1", space_name: "Project",
@@ -291,7 +293,7 @@ test("the focused agent's row is marked as selected", () => {
     agents: () => list, terminals: () => list.map(a => ({ ...a, state: "live", labels: {} })),
     panes: () => list.map(a => ({ ...a, terminal: a.address })), focused: () => ({ agent: "t2" }),
     spaces: () => [{ tabs: list.map(a => ({ id: a.tab, name: a.address, named: true })) }],
-    layout: () => ({ id: "sidebar", size: { px: 268 } }), shared: () => "grouped",
+    layout: () => ({ id: "sidebar", size: { px: width } }), shared: () => "grouped",
     theme: () => ({ selected: "selected", hover: "hover" }), setAgentOrder() {},
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
   });
@@ -344,9 +346,49 @@ test("a title's leading emoji stays, a status glyph before it goes", () => {
   expect(row("🔴 claude")).toBe("🔴 claude");
 });
 
-for (const sort of ["priority", "grouped"]) test(`${sort}: the rail draws no agent rows (they show on the space avatars) but still orders agents`, () => {
-  const { ids, order } = keptRender(sort, { width: 44, statuses: { t1: "blocked" } });
-  expect(ids.filter((id) => /^(ag-t|sub-|sec-|sp-)/.test(id))).toEqual([]);
+for (const sort of ["priority", "grouped"]) test(`${sort}: the rail draws one cell per agent, in order, with no section headers`, () => {
+  const { ids, texts, order } = keptRender(sort, { width: 44, statuses: { t1: "blocked" } });
+  expect(ids.filter((id) => /^ag-t/.test(id))).toEqual(["ag-t1", "ag-t3"]);
+  expect(ids.filter((id) => /^(sub-|sec-|sp-)/.test(id))).toEqual([]);
+  expect(texts.get("ag-t1")).toContain("1");
+  expect(texts.get("ag-t3")).toContain("2");
   expect(ids).toContain("collapse");
   expect(order).toEqual(["t1", "t3"]);
+});
+
+test("a rail cell shows its agent on its space's colour, a ring while working, a dot when it needs you or is done", () => {
+  const program = { name: "Claude", key: "claude", agent: true };
+  const statuses = { t1: "working", t2: "blocked", t3: "done", t4: "idle" } as Record<string, string>;
+  const list = Object.keys(statuses).map((address, i) => ({
+    address, pane: `p-${address}`, tab: address, space: i < 3 ? "s1" : "s2", space_name: i < 3 ? "api" : "~",
+    program, title: `Task ${address}`, status: statuses[address], seq: i,
+  }));
+  const svgs: string[] = [];
+  const { agents } = harness([], {
+    agents: () => list, terminals: () => list.map(a => ({ ...a, state: "live", labels: {} })),
+    panes: () => list.map(a => ({ ...a, terminal: a.address })), focused: () => null,
+    spaces: () => [{ tabs: list.map(a => ({ id: a.tab, name: a.address, named: false })) }],
+    layout: () => ({ id: "sidebar", size: { px: 44 } }),
+    shared: (key: string) => (key === "space.colors" ? { s1: "ansi4" } : "grouped"),
+    theme: () => ({ working: "W", blocked: "B", done: "D", raised: "R" }), setAgentOrder() {},
+    div: element, v_flex: element, h_flex: element, image: element,
+    svg: (path: string) => { svgs.push(path); return element(); },
+  });
+  const cells = new Map<string, any>();
+  const walk = (node: any) => {
+    if (node?.id?.startsWith("ag-t")) cells.set(node.id, node);
+    (node?.children ?? []).forEach(walk);
+  };
+  walk(agents.render({}).node);
+  expect([...cells.keys()]).toEqual(["ag-t1", "ag-t2", "ag-t3", "ag-t4"]);
+  const fills = (node: any): unknown[] => [node?.bg, ...(node?.children ?? []).flatMap(fills)].filter(Boolean);
+  // The space's palette colour, faded; a space without one gets a neutral tile.
+  expect(fills(cells.get("ag-t1"))).toContain("#5b8def55");
+  expect(fills(cells.get("ag-t4"))).toContain("R");
+  // One ring, on the working agent; a dot in the status colour on the blocked and done ones.
+  expect(svgs.filter((p) => p === "mods/agents/ring.svg")).toHaveLength(1);
+  expect(fills(cells.get("ag-t1"))).not.toContain("B");
+  expect(fills(cells.get("ag-t2"))).toContain("B");
+  expect(fills(cells.get("ag-t3"))).toContain("D");
+  expect(cells.get("ag-t1").tooltip).toBe("Claude \u00b7 api \u00b7 Task t1");
 });

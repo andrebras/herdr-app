@@ -75,6 +75,16 @@ function duration(ms) {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
+// A space's colour (shared "space.colors", as the spaces mod draws its avatar), faded so
+// an icon reads on it; null when the space has none.
+const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
+function spaceTint(t, space) {
+  const color = (shared("space.colors") ?? {})[space];
+  if (typeof color !== "string") return null;
+  const hex = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+  return typeof hex === "string" && /^#[0-9a-f]{6}$/i.test(hex) ? `${hex}55` : hex;
+}
+
 // The agent's icon from the app's program table: a one-color glyph or a picture.
 function icon(p, size, color) {
   if (!p?.icon) return null;
@@ -208,6 +218,39 @@ export default class Agents extends View {
       .child(this.status(t, { status: st }, compact));
   }
 
+  // One agent on the rail: its program's icon on a round tile in its space's colour (so it
+  // matches that space's avatar above), a spinning ring while it works, a dot when it
+  // needs you or is done, its agent number in a corner, the rest in a tooltip.
+  railCell(t, a, pic, tooltip, number) {
+    const dot = a.status === "blocked" || a.status === "done" ? a.status : null;
+    // Centred and as wide as a space's rail cell (spaces' RAIL_CELL), so they line up.
+    return h_flex().flex_none().justify_center().child(h_flex()
+      .id(`ag-${a.address}`)
+      .relative()
+      .w(32)
+      .h(34)
+      .rounded(7)
+      .flex_none()
+      .justify_center()
+      .items_center()
+      .when(a.focused, (el) => el.bg(t.selected))
+      .hover((s) => s.bg(t.hover))
+      .on_click(() => run("pane.focus", { pane: a.pane }))
+      .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
+      .when(a.focused, (el) => el.child(div().absolute().left(0).top(9).w(3).h(16).rounded(2).bg(t.foreground)))
+      .child(h_flex().relative().size(28).flex_none().items_center().justify_center()
+        .when(a.status === "working", (el) => el.child(svg("mods/agents/ring.svg").absolute().top(0).left(0).size(28).text_color(t.working).spin(900)))
+        .child(h_flex().size(22).flex_none().rounded(11).items_center().justify_center()
+          .bg(spaceTint(t, a.space) ?? t.raised ?? t.hover)
+          .when(!a.focused && a.status === "idle", (el) => el.opacity(0.7))
+          .child(pic))
+        .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
+          .border(2).border_color(t.chrome).bg(t[dot])))
+        // agent.select's index, as the rail always showed it.
+        .child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
+          .text_size(8.5).font_bold().text_color(a.focused ? t.foreground : t.dim).child(String(number)))));
+  }
+
   // compact: a ! for blocked where a header already says "Needs you".
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
@@ -305,6 +348,7 @@ export default class Agents extends View {
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
+      if (collapsed) return this.railCell(t, a, pic, [a.program?.name, a.space_name, more, machine].filter(Boolean).join(" \u00b7 "), i + 1);
       const when = this.since(a);
       const idle = a.status === "idle" && !a.focused;
       const isPinned = a.pinned;
@@ -399,17 +443,16 @@ export default class Agents extends View {
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
-    // The rail shows agents on their spaces' avatars (the spaces mod), not as rows here.
     const rows = collapsed
-      ? []
+      ? list.flatMap(withKids)
       : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
 
     return v_flex()
       .size_full()
       .min_h(0)
       .bg(t.chrome)
-      // On the rail this block is only the unfold button: no line across it.
-      .when(!collapsed, (el) => el.border_t(1).border_color(t.border))
+      .border_t(1)
+      .border_color(t.border)
       .text_size(13)
       .when(!collapsed, (el) =>
         el.child(
@@ -437,7 +480,7 @@ export default class Agents extends View {
       .when(list.length === 0 && !collapsed, (el) =>
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
+      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).when(collapsed, (el) => el.pt(8)).overflow_y_scrollbar().mode("always").children(rows))
       .when(collapsed, (el) =>
         el.child(
           h_flex()
