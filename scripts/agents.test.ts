@@ -266,6 +266,7 @@ for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent unde
 });
 
 for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent keeps its own row where no tree shows it`, () => {
+  expect(keptRender(sort, { width: 44 }).ids).toContain("ag-t3"); // the rail draws no trees
   const pinned = keptRender(sort, { pinned: ["t3"] });
   expect(pinned.ids).toContain("ag-t3");
   expect(pinned.texts.get("ag-t1")).toContain("Task t1");
@@ -720,9 +721,11 @@ test("the agent details dialog offers terminal reveal only on macOS", () => {
   }
 });
 
-for (const sort of ["priority", "grouped"]) test(`${sort}: the rail draws no agent rows (they show on the space avatars) but still orders agents`, () => {
-  const { ids, order } = keptRender(sort, { width: 44, statuses: { t1: "blocked" } });
-  expect(ids.filter((id) => /^(ag-t|sub-|sec-|sp-)/.test(id))).toEqual([]);
+for (const sort of ["priority", "grouped"]) test(`${sort}: the rail draws one cell per agent, in order, with no section headers`, () => {
+  const { ids, texts, order } = keptRender(sort, { width: 44, statuses: { t1: "blocked" } });
+  expect(ids.filter((id) => /^ag-t/.test(id))).toEqual(["ag-t1", "ag-t3"]);
+  expect(ids.filter((id) => /^(sub-|sec-|sp-)/.test(id))).toEqual([]);
+  expect(texts.get("ag-t1")).toContain("1");
   expect(ids).toContain("collapse");
   expect(order).toEqual(["t1", "t3"]);
 });

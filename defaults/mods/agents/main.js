@@ -86,6 +86,16 @@ function duration(ms) {
 }
 
 // The agent's icon from the app's program table: a one-color glyph or a picture.
+// A space's colour (shared "space.colors", as the spaces mod draws its avatar), faded so
+// an icon reads on it; null for a group that isn't a Herdr space.
+const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
+function spaceTint(t, space) {
+  const color = (shared("space.colors") ?? {})[space];
+  if (!color) return null;
+  const hex = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+  return typeof hex === "string" && /^#[0-9a-f]{6}$/i.test(hex) ? `${hex}55` : hex;
+}
+
 function icon(p, size, color) {
   if (!p?.icon) return null;
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
@@ -456,6 +466,41 @@ export default class Agents extends View {
   }
 
   // compact: a ! for blocked where a header already says "Needs you".
+  // One agent on the rail: its program's icon on a tile in its space's colour (so it
+  // matches that space's avatar above), a spinning ring while it works, a dot when it
+  // needs you or is done, its agent number in a corner, the rest in a tooltip. Agents
+  // Herdr only detected (outside its terminals) are dimmed: their status is unknown.
+  railCell(t, a, pic, tooltip, number) {
+    const tint = spaceTint(t, a.group);
+    const known = a.status !== "unknown";
+    const dot = a.status === "blocked" || a.status === "done" ? a.status : null;
+    return h_flex()
+      .id(a.rowId)
+      .relative()
+      .h(34)
+      .mx(6)
+      .rounded(7)
+      .flex_none()
+      .justify_center()
+      .items_center()
+      .when(a.focused, (el) => el.bg(t.selected))
+      .hover((s) => s.bg(t.hover))
+      .on_click(a.activate)
+      .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
+      .when(a.focused, (el) => el.child(div().absolute().left(0).top(9).w(3).h(16).rounded(2).bg(t.foreground)))
+      .child(h_flex().relative().size(28).flex_none().items_center().justify_center()
+        .when(a.status === "working", (el) => el.child(svg("mods/spaces/ring.svg").absolute().top(0).left(0).size(28).text_color(t.working).spin(900)))
+        .child(h_flex().size(22).flex_none().rounded(11).items_center().justify_center()
+          .bg(tint ?? t.raised ?? t.hover)
+          .when(!known, (el) => el.opacity(0.45))
+          .when(known && !a.focused && a.status === "idle", (el) => el.opacity(0.7))
+          .child(pic))
+        .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
+          .border(2).border_color(t.chrome).bg(t[dot])))
+        .when(number !== undefined && number <= 9, (el) => el.child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
+          .text_size(8.5).font_bold().text_color(a.focused ? t.foreground : t.dim).child(String(number)))));
+  }
+
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "unknown") return div().w(13).flex_none().text_center().text_color(t.dim)
@@ -593,6 +638,7 @@ export default class Agents extends View {
       const pic = icon(a.program, 16, t.foreground);
       const more = a.detail;
       const tooltip = [a.program?.name, a.spaceName, more, a.location, a.status === "unknown" ? "Status unavailable" : null].filter(Boolean).join(" · ");
+      if (collapsed) return this.railCell(t, a, pic, tooltip, navigationIndices.get(a.address));
       const when = a.since;
       const muted = (a.status === "idle" || a.status === "unknown") && !a.focused;
       const isPinned = a.pinned;
@@ -686,8 +732,12 @@ export default class Agents extends View {
       rows.push(row(a));
       if (!this.folded.has(a.address)) rows.push(...a.children.map(child => this.subRow(t, child, shown, byPriority)));
     };
-    // The rail shows agents on their spaces' avatars (the spaces mod), not as rows here.
-    if (!collapsed) {
+    if (collapsed) {
+      ordered.forEach((a) => {
+        if (a.focused) selectedAt = rows.length;
+        rows.push(row(a));
+      });
+    } else {
       for (const group of groups) {
         const folded = this.folded.has(group.id);
         group.selected = group.members.some(a => a.focused);
@@ -707,8 +757,8 @@ export default class Agents extends View {
       .size_full()
       .min_h(0)
       .bg(t.chrome)
-      // On the rail this block is only the unfold button: no line across it.
-      .when(!collapsed, (el) => el.border_t(1).border_color(t.border))
+      .border_t(1)
+      .border_color(t.border)
       .text_size(13)
       .when(!collapsed, (el) =>
         el.child(
