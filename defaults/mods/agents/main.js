@@ -474,11 +474,12 @@ export default class Agents extends View {
     const tint = spaceTint(t, a.group);
     const known = a.status !== "unknown";
     const dot = a.status === "blocked" || a.status === "done" ? a.status : null;
-    return h_flex()
+    // Centred and as wide as a space's rail cell (spaces' RAIL_CELL), so they line up.
+    return h_flex().flex_none().justify_center().child(h_flex()
       .id(a.rowId)
       .relative()
+      .w(32)
       .h(34)
-      .mx(6)
       .rounded(7)
       .flex_none()
       .justify_center()
@@ -498,7 +499,7 @@ export default class Agents extends View {
         .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
           .border(2).border_color(t.chrome).bg(t[dot])))
         .when(number !== undefined && number <= 9, (el) => el.child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
-          .text_size(8.5).font_bold().text_color(a.focused ? t.foreground : t.dim).child(String(number)))));
+          .text_size(8.5).font_bold().text_color(a.focused ? t.foreground : t.dim).child(String(number))))));
   }
 
   status(t, a, compact = false) {
