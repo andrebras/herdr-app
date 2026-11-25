@@ -305,22 +305,6 @@ export default class Agents extends View {
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
-      if (collapsed) {
-        return h_flex()
-          .id(`ag-${a.address}`)
-          .h(26)
-          .mx(6)
-          .px(2)
-          .rounded(6)
-          .flex_none()
-          .items_center()
-          .gap(4)
-          .when(a.focused, (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
-          .on_click(() => run("pane.focus", { pane: a.pane }))
-          .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(a.focused ? t.foreground : t.muted).child(String(i + 1)))
-          .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
-      }
       const when = this.since(a);
       const idle = a.status === "idle" && !a.focused;
       const isPinned = a.pinned;
@@ -415,16 +399,17 @@ export default class Agents extends View {
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
+    // The rail shows agents on their spaces' avatars (the spaces mod), not as rows here.
     const rows = collapsed
-      ? list.flatMap(withKids)
+      ? []
       : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
 
     return v_flex()
       .size_full()
       .min_h(0)
       .bg(t.chrome)
-      .border_t(1)
-      .border_color(t.border)
+      // On the rail this block is only the unfold button: no line across it.
+      .when(!collapsed, (el) => el.border_t(1).border_color(t.border))
       .text_size(13)
       .when(!collapsed, (el) =>
         el.child(
