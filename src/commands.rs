@@ -81,7 +81,7 @@ pub const COMMANDS: &[Command] = &[
     cmd("layout.clone", &[req("name"), opt("as")], "Duplicate a layout as <name>-copy (or as), then show it."),
     cmd("mod.clone", &[req("name"), opt("as")], "Duplicate a mod as <name>-copy (or as)."),
     cmd("layout.set", &[req("layout")], "Replace a personal layout tree; shipped layouts accept only click/look fields (not structure)."),
-    cmd("layout.toggle", &[req("id")], "Hide or show a layout node."),
+    cmd("layout.toggle", &[req("id"), opt("stack"), opt("child")], "Hide or show a layout node (with stack and child: show it on that child, or hide it when it already shows it)."),
     cmd("layout.show", &[req("id")], "Show a layout node."),
     cmd("layout.hide", &[req("id")], "Hide a layout node."),
     cmd("layout.resize", &[req("id"), opt("px"), opt("weight")], "Size a layout node."),

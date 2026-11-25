@@ -697,7 +697,7 @@ The main ones:
   Terminals display Kitty graphics, including Unicode placeholder images used by
   programs such as yazi; partial images and scrolling follow the placeholder cells.
 - Agents: `agent.next`, `agent.prev`, `agent.select {index}`, `agent.focus {terminal}`.
-- Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
+- Layout: `layout.switch {name?}`, `layout.toggle {id, stack?, child?}` (with `stack` and `child`: shows `id` on that child, or hides it when it already shows it, as the side panel buttons do), `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child, show?}` (`show: true` also shows the stack and what hides it), `layout.set {layout}`
   (personal tree edits; on shipped layouts only click/look fields change),
   `layout.reset {name?}` (reset a shipped layout and its clicks),
@@ -939,8 +939,9 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   beside Files and Changes, with a tab-bar button that shows and hides it as
   theirs do: `"panel": { "title": "Tempo", "icon": "icon.svg" }` (`icon`: an SVG
   file in the mod's folder). Its block is `panel-<mod>` in the `panel-body`
-  stack, so `layout.select {stack: "panel-body", child: "panel-<mod>", show: true}`
-  opens it (a palette entry can use it). Give such a mod `"place": "none"`.
+  stack, so `layout.toggle {id: "panel", stack: "panel-body", child: "panel-<mod>"}`
+  shows and hides it as its button does, and `layout.select {stack: "panel-body",
+  child: "panel-<mod>", show: true}` only shows it (palette entries can use either). Give such a mod `"place": "none"`.
   Personal layouts place it themselves.
 
 - The first time Herdr sees a folder, it docks one copy per `mod.json` into
