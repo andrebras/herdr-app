@@ -22,13 +22,18 @@ class Element {
 const source = await readFile(new URL("../defaults/mods/tabs/main.js", import.meta.url), "utf8");
 const element = () => new Element();
 const commands: string[] = [];
+const runs: [string, unknown][] = [];
+const state: { panes: unknown[]; shared: Record<string, unknown>; files: Record<string, string> } = { panes: [], shared: {}, files: {} };
 const store: Record<string, string> = {};
 const values: Record<string, unknown> = {
   View: class {}, div: element, svg: element, image: element, h_flex: element,
   ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
   spaces: () => [{ id: "s1", active: true, tabs: [{ id: "t1", name: "a" }, { id: "t2", name: "b", active: true }, { id: "t3", name: "c" }] }],
-  panes: () => [], run(command: string) { commands.push(command); }, openOverlay() {}, theme: () => ({}),
-  window: () => null, shared: () => null, layout: () => null, settings: () => ({ zoom: 1 }),
+  panes: () => state.panes, run(command: string, args?: unknown) { commands.push(command); runs.push([command, args]); }, openOverlay() {}, theme: () => ({}),
+  window: () => null, shared: (key: string) => state.shared[key] ?? null, layout: () => null, settings: () => ({ zoom: 1 }),
+  appHome: () => "/home", checking: () => true, watchFolder: () => new Promise(() => {}),
+  readdir: async () => [...new Set(Object.keys(state.files).map((f) => f.split("/")[3]))],
+  readFile: async (path: string) => { if (!(path in state.files)) throw new Error("missing"); return state.files[path]; },
   localStorage: { getItem: (key: string) => store[key] ?? null, setItem(key: string, value: string) { store[key] = value; } },
 };
 const Tabs = new Function(...Object.keys(values), source.replace(/^import .*;\n/gm, "").replace("export default class Tabs", "return class Tabs"))(...Object.values(values));
@@ -45,7 +50,7 @@ function wheel() {
     handler({ delta: { x: 0, y }, delta_lines: lines === undefined ? undefined : { x: 0, y: lines }, touch_phase });
   };
 }
-beforeEach(() => { commands.length = 0; });
+beforeEach(() => { commands.length = 0; runs.length = 0; Object.assign(state, { panes: [], shared: {}, files: {} }); });
 // Bun runs every test file in one process: give the later ones the real clock.
 afterAll(() => setSystemTime());
 
@@ -139,4 +144,57 @@ test("a shell's title never replaces its tab's name", () => {
   expect(label({ name: "", named: false }, shell)).toBe("zsh");
   expect(label({ name: "notes", named: true }, shell)).toBe("notes");
   expect(label({ name: "", named: false }, undefined)).toBe("Terminal");
+});
+
+function find(el: Element, id: string): Element | null {
+  if (el.calls.id?.[0] === id) return el;
+  for (const node of el.nodes) {
+    const found = node instanceof Object && "nodes" in node ? find(node as Element, id) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
+async function buttons() {
+  const view = new Tabs();
+  view.init();
+  view.watchButtons({ notify() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return view;
+}
+
+const click = (view: InstanceType<typeof Tabs>, id: string) => {
+  const button = find(view.render() as Element, id);
+  (button!.calls.on_click[0] as () => void)();
+};
+
+test("a mod's tab_button shows in the tab bar; others and malformed ones don't", async () => {
+  state.files = {
+    "/home/mods/tempo/mod.json": JSON.stringify({ tab_button: { title: "Questions", icon: "icon.svg", toggle: "toggle" } }),
+    "/home/mods/plain/mod.json": JSON.stringify({ place: "right" }),
+    "/home/mods/bad/mod.json": JSON.stringify({ tab_button: { title: "  ", icon: "../x.svg" } }),
+    "/home/mods/odd/mod.json": "{",
+  };
+  const view = await buttons();
+  expect(view.buttons).toEqual([{ mod: "tempo", title: "Questions", icon: "mods/tempo/icon.svg", toggle: "tempo.toggle" }]);
+  expect(find(view.render() as Element, "mod-tempo")).not.toBeNull();
+});
+
+test("a mod's button adds its pane at the right of the tab, then toggles it", async () => {
+  state.files = { "/home/mods/tempo/mod.json": JSON.stringify({ tab_button: { title: "Questions", toggle: "toggle" } }) };
+  state.panes = [{ pane: "p1", tab: "t2" }, { pane: "p2", tab: "t2" }, { pane: "p9", tab: "t1", mod: "tempo" }];
+  const view = await buttons();
+  click(view, "mod-tempo");
+  expect(runs).toEqual([["pane.split", { direction: "right", mod: "tempo", pane: "p2" }]]);
+  state.panes.push({ pane: "p3", tab: "t2", mod: "tempo" });
+  click(view, "mod-tempo");
+  expect(runs[1]).toEqual(["tempo.toggle", undefined]);
+});
+
+test("without a toggle command, the button closes the mod's pane", async () => {
+  state.files = { "/home/mods/board/mod.json": JSON.stringify({ tab_button: { title: "Board" } }) };
+  state.panes = [{ pane: "p1", tab: "t2" }, { pane: "p3", tab: "t2", mod: "board" }];
+  const view = await buttons();
+  click(view, "mod-board");
+  expect(runs).toEqual([["pane.close", { pane: "p3" }]]);
 });
