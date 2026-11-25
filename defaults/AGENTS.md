@@ -940,6 +940,14 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   ("Recent" is reserved). `words` is an optional string of search terms.
   Malformed entries and duplicate command and argument pairs are skipped.
 
+- `"tab_button"` in `mod.json` adds a button to the tab bar, after Files and Changes:
+  `"tab_button": { "title": "Questions", "icon": "icon.svg", "toggle": "toggle" }`.
+  A click adds the mod as a pane at the right of the shown tab. When the tab
+  has one, it runs `<mod>.<toggle>` (a shown copy gets it from `nextCommand()`),
+  or closes the pane when `toggle` is left out. `icon` is an SVG file in the
+  mod's folder. A number the mod publishes with `setShared("<mod>.badge", n)`
+  shows on the button while it is above 0.
+
 - The first time Herdr sees a folder, it docks one copy per `mod.json` into
   the shown layout (`"none"`: only where a layout or another mod puts it).
   After that, the layouts decide. Saving any file reloads every copy in place

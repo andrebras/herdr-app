@@ -1,6 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
+import { readdir, readFile } from "fs/promises";
+import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, appHome, checking, watchFolder } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -9,6 +10,29 @@ function find(node, id) {
     if (found) return found;
   }
   return null;
+}
+
+// The `tab_button` of each mods/<name>/mod.json: { mod, title, icon, toggle }. Unreadable
+// or malformed ones are skipped.
+async function tabButtons() {
+  const dir = `${appHome()}/mods`;
+  let names;
+  try {
+    names = (await readdir(dir)).filter((n) => !n.startsWith(".")).sort();
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const mod of names) {
+    try {
+      const b = JSON.parse(await readFile(`${dir}/${mod}/mod.json`, "utf8")).tab_button;
+      if (!b || typeof b !== "object" || typeof b.title !== "string" || !b.title.trim()) continue;
+      const icon = typeof b.icon === "string" && /^[\w.-]+\.svg$/.test(b.icon) ? `mods/${mod}/${b.icon}` : null;
+      const toggle = typeof b.toggle === "string" && b.toggle.trim() ? `${mod}.${b.toggle.trim()}` : null;
+      found.push({ mod, title: b.title.trim(), icon, toggle });
+    } catch {}
+  }
+  return found;
 }
 
 // Same as the agents mod: drops a status glyph, keeps a leading bracket or quote.
@@ -28,12 +52,26 @@ function label(tab, lead) {
 }
 
 export default class Tabs extends View {
-  init() {
+  init(_props, cx) {
+    if (!checking()) cx.spawn((cx) => this.watchButtons(cx));
     this.pressed = null;
     this.scroll = ScrollHandle.new();
     try { this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}"); } catch { this.panels = {}; }
     if (!this.panels || typeof this.panels !== "object" || Array.isArray(this.panels)) this.panels = {};
     this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
+    this.buttons = [];
+  }
+
+  // Mods' own buttons, reread when a file under mods/ changes.
+  async watchButtons(cx) {
+    for (;;) {
+      const buttons = await tabButtons();
+      if (JSON.stringify(buttons) !== JSON.stringify(this.buttons)) {
+        this.buttons = buttons;
+        cx.notify();
+      }
+      await watchFolder(`${appHome()}/mods`);
+    }
   }
 
   // One tab per wheel notch. A touchpad or smooth-scrolling mouse sends many
@@ -141,6 +179,25 @@ export default class Tabs extends View {
           else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
         }).child(svg(icon).size(14)).child(label);
     };
+    // A mod's button adds the mod as a pane at the right of the tab; with one there, it
+    // runs the mod's toggle command, or closes the pane when it has none.
+    const tab = space?.tabs.find((x) => x.active);
+    const modButton = ({ mod, title, icon, toggle }) => {
+      const mine = panes().filter((p) => p.tab === tab?.id);
+      const own = mine.find((p) => p.mod === mod);
+      const count = shared(`${mod}.badge`);
+      return h_flex().id(`mod-${mod}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
+        .text_size(12).bg(own ? t.selected : t.chrome).text_color(own ? t.foreground : t.muted)
+        .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
+        .on_click(() => {
+          if (own && toggle) run(toggle);
+          else if (own) run("pane.close", { pane: own.pane });
+          else if (mine.length) run("pane.split", { direction: "right", mod, pane: mine[mine.length - 1].pane });
+        })
+        .when(Boolean(icon), el => el.child(svg(icon).size(14)))
+        .child(title)
+        .when(typeof count === "number" && count > 0, el => el.child(div().px(5).rounded(7).bg(t.blocked).text_size(10.5).text_color(t.solid_foreground).child(String(count))));
+    };
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => this.wheel(e))
@@ -150,6 +207,7 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
+      .children(this.buttons.map(modButton))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
