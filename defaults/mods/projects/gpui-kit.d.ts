@@ -22609,7 +22609,9 @@ declare module "herdr" {
    *  Call when rendering the list. The last order stays in memory until another call or app restart.
    *  Missing agents drop out of the order. Unlisted agents follow in model order.
    *  Without a supplied order, navigation uses model order. */
-  export function setAgentOrder(addresses: string[]): null;
+  /** With a navigation count, the visible mod receives next-agent, previous-agent
+   * and select-agent-N commands for interactive navigation. */
+  export function setAgentOrder(addresses: string[], navigationCount?: number): null;
 
   /** Every core terminal as `hc ls --json` describes it (address, argv, name, template, parent,
    *  labels, state, ...), with `status` as a plain word, the agent's report in `report`, and
