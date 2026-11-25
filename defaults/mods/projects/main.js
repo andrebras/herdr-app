@@ -18,7 +18,7 @@ import { spaces, panes, run, theme, props, closeOverlay, home, appHome } from "h
 const DEFAULTS = { roots: ["~/Lab"], depth: 3, folders: [] };
 // How many matches show: the best ones, as a fuzzy finder does.
 const SHOWN = 12;
-// At most this many folders are read per search, so a huge root can't stall it.
+// At most this many folders are looked at per search, so a huge root can't stall it.
 const MAX_FOLDERS = 5000;
 
 export default class Projects extends View {
@@ -48,11 +48,10 @@ export default class Projects extends View {
 
   // Open spaces on this computer, then the projects without one, best matches first.
   rows() {
-    const open = spaces().filter((s) => !s.machine);
-    const rows = open.map((s) => ({ kind: "space", space: s, name: s.name, path: liveFolder(s) }));
-    const taken = new Set(rows.map((r) => r.path));
+    const local = localSpaces();
+    const rows = local.map(({ space, folders }) => ({ kind: "space", space, name: space.name, path: folders[0] ?? "" }));
     for (const path of this.repos ?? []) {
-      if (!taken.has(path) && !spaceFor(path)) rows.push({ kind: "project", name: base(path), path });
+      if (!spaceFor(path, local)) rows.push({ kind: "project", name: base(path), path });
     }
     const typed = this.filter.trim();
     const f = typed.toLowerCase();
@@ -79,20 +78,22 @@ export default class Projects extends View {
     if (r.kind === "folder") return this.openTyped(r.path, cx);
     this.close();
     if (r.kind === "space") return run("space.select", { id: r.space.id });
-    const there = spaceFor(r.path);
+    const there = spaceFor(r.path, localSpaces());
     if (there) run("space.select", { id: there.id });
     else run("space.new", { folder: r.path, name: r.name });
   }
 
-  // A typed folder opens when it exists; otherwise the popup says so and stays.
+  // A typed folder opens when it exists; otherwise the popup says so and stays. Mods may
+  // only read in the home folder, so a folder elsewhere opens unchecked, and Herdr says
+  // so if it isn't there.
   async openTyped(path, cx) {
-    if (!(await isFolder(path))) {
+    if (inHome(path) && !(await isFolder(path))) {
       this.missing = this.filter.trim();
       cx.notify();
       return;
     }
     this.close();
-    const there = spaceFor(path);
+    const there = spaceFor(path, localSpaces());
     if (there) run("space.select", { id: there.id });
     else run("space.new", { folder: path, name: base(path) });
   }
@@ -225,13 +226,18 @@ async function findProjects({ roots, depth, folders }) {
     }
     for (const e of entries) {
       if (e.name.startsWith(".") || e.name === "node_modules" || !e.isDirectory()) continue;
+      if (budget-- <= 0) return;
       const sub = join(dir, e.name);
       if (await exists(join(sub, ".git")).catch(() => false)) found.push(sub);
       else if (left > 1) await walk(sub, left - 1);
     }
   };
   for (const root of roots) await walk(trim(expand(root)), depth);
-  const listed = folders.map((f) => trim(expand(f)));
+  const listed = [];
+  for (const f of folders) {
+    const path = trim(expand(f));
+    if (!inHome(path) || (await isFolder(path))) listed.push(path);
+  }
   return [...new Set([...found.sort(), ...listed])];
 }
 
@@ -244,24 +250,30 @@ async function isFolder(path) {
   }
 }
 
-// Where a space is now: its shown tab's focused terminal, else its first, else where it
-// was made (a space's folder is only where it started).
-function liveFolder(space) {
-  const shown = space.tabs.find((t) => t.active) ?? space.tabs[0];
-  const mine = panes().filter((p) => p.tab === shown?.id && p.cwd);
-  return (mine.find((p) => p.focused) ?? mine[0])?.cwd ?? space.folder ?? "";
+// The spaces on this computer, each with its folders: where it is now first (its shown
+// tab's focused terminal, else its first), then its other terminals' folders, then where
+// it was made. Read once per list, not once per project.
+function localSpaces() {
+  const all = panes();
+  return spaces()
+    .filter((s) => !s.machine)
+    .map((space) => {
+      const shown = space.tabs.find((t) => t.active) ?? space.tabs[0];
+      const tabs = new Set(space.tabs.map((t) => t.id));
+      const mine = all.filter((p) => tabs.has(p.tab) && p.cwd);
+      const here = mine.filter((p) => p.tab === shown?.id);
+      const now = (here.find((p) => p.focused) ?? here[0])?.cwd;
+      const folders = [now, ...mine.map((p) => p.cwd), space.folder].filter(Boolean);
+      return { space, folders: [...new Set(folders)] };
+    });
 }
 
-// The space on this computer for a folder: made there, or with a terminal there now.
-function spaceFor(path) {
-  const mine = spaces().filter((s) => !s.machine);
-  const made = mine.find((s) => s.folder === path);
-  if (made) return made;
-  const inside = (cwd) => cwd === path || cwd?.startsWith(`${path}/`);
-  return mine.find((s) => {
-    const tabs = new Set(s.tabs.map((t) => t.id));
-    return panes().some((p) => tabs.has(p.tab) && inside(p.cwd));
-  });
+// The space on this computer for a folder: made there, else one with a terminal in it.
+function spaceFor(path, local) {
+  const made = local.find(({ space }) => space.folder === path);
+  if (made) return made.space;
+  const inside = (cwd) => cwd === path || cwd.startsWith(join(path, ""));
+  return local.find(({ folders }) => folders.some(inside))?.space;
 }
 
 // Higher is better, 0 is no match: the name starting with it, then containing it, then
@@ -304,6 +316,11 @@ function expand(p) {
 function trim(p) {
   const t = p.replace(/[/\\]+$/, "");
   return t === "" ? p.slice(0, 1) : /^[A-Za-z]:$/.test(t) ? `${t}${sep()}` : t;
+}
+
+function inHome(p) {
+  const h = home();
+  return p === h || p.startsWith(join(h, ""));
 }
 
 function short(p) {

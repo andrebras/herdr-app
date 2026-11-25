@@ -87,7 +87,7 @@ test("lists repos under ~/Lab by default, without repos nested in another or hid
 });
 
 test("projects.json sets the roots, the depth and extra folders", async () => {
-  const view = await open(["/u/code/api", "/u/code/x/y/deep", "/u/Lab/skipped"], [], JSON.stringify({ roots: ["~/code/"], depth: 2, folders: ["~/notes/"] }));
+  const view = await open(["/u/code/api", "/u/code/x/y/deep", "/u/Lab/skipped"], [], JSON.stringify({ roots: ["~/code/"], depth: 2, folders: ["~/notes/"] }), ["/u/notes/todo"]);
   expect(view.rows().map((r: any) => r.path)).toEqual(["/u/code/api", "/u/notes"]);
 });
 
@@ -161,6 +161,13 @@ test("Windows paths: backslashes, a drive, ~\\ and names from either separator",
     expect(view.rows().map((r: any) => r.kind)).toEqual(["folder", "project"]);
     await enter(view);
     expect(commands).toEqual([["space.new", { folder: "C:\\Users\\me\\src", name: "src" }]]);
+    // A space with a terminal inside the repo is that repo's space, not a second one.
+    commands.length = 0;
+    state.spaces = [{ id: "s1", name: "work", folder: "C:\\Users\\me", tabs: [{ id: "t1", active: true }] }];
+    state.panes = [{ tab: "t1", cwd: "C:\\Users\\me\\src\\api\\lib" }];
+    expect(view.rows().map((r: any) => r.kind)).toEqual(["folder", "space"]);
+    await view.go({ kind: "project", name: "api", path: "C:\\Users\\me\\src\\api" }, cx);
+    expect(commands).toEqual([["space.select", { id: "s1" }]]);
   } finally {
     state.home = "/u";
   }
@@ -170,4 +177,16 @@ test("no projects at all says where to list folders", async () => {
   const view = await open([]);
   const text = JSON.stringify(view.render(), (k, v) => (k === "calls" ? undefined : v));
   expect(text).toContain("projects.json");
+});
+
+test("a typed folder outside home opens unchecked, since mods can't read there", async () => {
+  const view = await open([]);
+  type(view, "/opt/app");
+  await enter(view);
+  expect(commands).toEqual([["space.new", { folder: "/opt/app", name: "app" }]]);
+});
+
+test("listed folders that don't exist in home are left out", async () => {
+  const view = await open([], [], JSON.stringify({ roots: [], folders: ["~/gone", "~/notes", "/srv/elsewhere"] }), ["/u/notes/readme"]);
+  expect(view.rows().map((r: any) => r.path)).toEqual(["/u/notes", "/srv/elsewhere"]);
 });
