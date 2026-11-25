@@ -1,11 +1,12 @@
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
-// its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here. Click to
-// switch, right-click for its menu, drag to reorder.
+// its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here,
+// except on the narrow rail, where each avatar carries its space's agents. Click to switch, right-click for its menu,
+// drag to reorder.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, checking, terminals, focused, home, notify, nextCommand } from "herdr";
+import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, checking, terminals, focused, home, notify, nextCommand } from "herdr";
 import { INSPECT_ARGS, parseSnapshot, findClients, pickClient, attachArgv, openArgs, newSessionArgs, parseAgentTarget, selectPaneArgs } from "./tmux.js";
 
 function find(node, id) {
@@ -69,13 +70,26 @@ function spaceAvatar(name) {
   return EMOJI.exec(name)?.[0] ?? ([...name][0]?.toUpperCase() ?? "?");
 }
 
-// A space speaks up only when something in it needs you.
-export function glyph(status) {
-  return status === "blocked" || status === "done" ? "●" : "·";
+// An avatar's color: a stored palette name or a #hex, the same in the full list and on the rail.
+function fillOf(t, w) {
+  const color = (shared("space.colors") ?? {})[w.id] ?? "ansi6";
+  return color.startsWith("#") ? color : (MARK[color] ?? t[color]);
 }
 
-export function tone(t, status) {
-  return t[status] ?? t.unknown;
+const SAYS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
+
+// What a space's avatar on the rail shows: a spinning ring while one of its agents
+// works, a dot when one needs you (else when one is done), and a tooltip naming the
+// space and its agents ("api · Claude working, Codex needs you").
+export function railState(w, list) {
+  const mine = list.filter((a) => a.space === w.id);
+  const has = (s) => w.status === s || mine.some((a) => a.status === s);
+  const who = mine.map((a) => `${a.program?.name || "Agent"} ${SAYS[a.status] ?? a.status}`);
+  return {
+    working: has("working"),
+    dot: has("blocked") ? "blocked" : has("done") ? "done" : null,
+    tip: [w.name, who.join(", ")].filter(Boolean).join(" \u00b7 "),
+  };
 }
 
 export default class Spaces extends View {
@@ -546,6 +560,8 @@ export default class Spaces extends View {
     const current = focus?.shown ?? focus?.terminal;
     const selected = clients.find(c => c.address === current)?.session;
     const rows = this.ordered();
+    // Read once: every host read copies the whole list.
+    const list = collapsed ? agents() : [];
     const workspaces = spaces();
     const client = pickClient(clients, focus, workspaces, this.lastTmuxClient);
     const hostSpace = this.tmux.sessions.length ? this.resolveTmuxHost(workspaces, client) : null;
@@ -559,7 +575,7 @@ export default class Spaces extends View {
         const active = row.w.active && (!ownsTmux || tmuxAt < 0);
         if (active) activeAt = elements.length;
         const display = { ...row, w: { ...row.w, active } };
-        elements.push(collapsed ? this.compact(display, t, ownsTmux) : this.row(display, t, ownsTmux));
+        elements.push(collapsed ? this.compact(display, t, list, ownsTmux) : this.row(display, t, ownsTmux));
         if (ownsTmux) {
           if (tmuxAt >= 0) activeAt = elements.length + tmuxAt;
           elements.push(...tmuxRows);
@@ -683,9 +699,7 @@ export default class Spaces extends View {
   row({ w, i, g, tree }, t, ownsTmux = false) {
     const on = w.active;
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
-    const colors = shared("space.colors") ?? {};
-    const color = colors[w.id] ?? "ansi6";
-    const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+    const fill = fillOf(t, w);
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -738,23 +752,37 @@ export default class Spaces extends View {
       );
   }
 
-  compact({ w, i }, t, ownsTmux = false) {
-    // An agent that needs the person outranks the tmux chevron in the narrow rail.
-    const dot = !ownsTmux || glyph(w.status) === "●";
+  // One rail cell: the space's avatar, its ctrl-number in a corner (space.select:N),
+  // its agents as a ring (working) and a dot (needs you, done), the rest in a tooltip.
+  // The tmux host space's chevron takes the dot's corner unless an agent needs you.
+  compact({ w, i }, t, list, ownsTmux = false) {
+    const on = w.active;
+    const state = railState(w, list);
+    const dot = state.dot && (!ownsTmux || state.dot === "blocked") ? state.dot : null;
     return railCell(h_flex()
       .id(`space-${w.id}`)
       .relative()
       .w(RAIL_CELL)
-      .h(26)
-      .rounded(6)
+      .h(34)
+      .rounded(7)
       .justify_center()
       .items_center()
-      .when(w.active, (el) => el.bg(t.selected))
-      .when(!w.active, (el) => el.hover((s) => s.bg(t.hover)))
+      .when(on, (el) => el.bg(t.selected))
+      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+      .tooltip(state.tip)
       .on_click(() => run("space.select", { id: w.id }))
-      .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
-      .when(dot, el => el.child(div().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))))
-      .when(!dot, el => el.child(div().absolute().right(-5).child(this.tmuxChevron(t, w.id)))));
+      .on_mouse_down("right", () => this.menu(w))
+      .when(on, (el) => el.child(div().absolute().left(0).top(9).w(3).h(16).rounded(2).bg(t.foreground)))
+      .child(h_flex().relative().size(28).flex_none().items_center().justify_center()
+        .when(state.working, (el) => el.child(svg("mods/spaces/ring.svg").absolute().top(0).left(0).size(28).text_color(t.working).spin(900)))
+        .child(h_flex().size(22).flex_none().rounded(6).bg(fillOf(t, w)).items_center().justify_center()
+          .when(!on, (el) => el.opacity(0.78))
+          .text_size(11.5).font_bold().text_color("#ffffff").child(spaceAvatar(w.name)))
+        .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
+          .border(2).border_color(t.chrome).bg(t[dot])))
+        .when(i < 9, (el) => el.child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
+          .text_size(8.5).font_bold().text_color(on ? t.foreground : t.dim).child(String(i + 1)))))
+      .when(ownsTmux && !dot, (el) => el.child(div().absolute().right(-5).child(this.tmuxChevron(t, w.id)))));
   }
 
   render() {
