@@ -7,7 +7,7 @@ const source = (await readFile(new URL("../defaults/mods/spaces/main.js", import
   .replace(/^import .*;\n/gm, "").replace("export default class Spaces", "class Spaces").replace(/^export /gm, "");
 
 type Space = { id: string; name: string; folder: string; machine?: string | null; active?: boolean };
-function harness(replies: unknown[] = [], storage = new Map<string, string>(), snapshot: Space[] = [], execGit?: (...args: any[]) => Promise<unknown>, watch?: (repo: string) => Promise<string[]>) {
+function harness(replies: unknown[] = [], storage = new Map<string, string>(), snapshot: Space[] = [], execGit?: (...args: any[]) => Promise<unknown>, watch?: (repo: string) => Promise<string[]>, agentList: unknown[] = []) {
   const calls: string[][] = [];
   const tasks: Promise<unknown>[] = [];
   const availability = [{ name: null as string | null, layout: "ready" }];
@@ -19,14 +19,16 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   const theme = () => new Proxy({}, { get: () => "#000000" });
   const tracked: unknown[] = [];
   const labels: string[] = [];
+  const tooltips: string[] = [];
   const element: any = new Proxy({}, { get: (_, method) => (...args: any[]) => {
     if (String(method).startsWith("on_")) handlers[String(method)] = args.at(-1);
     if (method === "track_scroll") tracked.push(args[0]);
     if (method === "when" && args[0]) args[1](element);
     if (method === "child" && typeof args[0] === "string") labels.push(args[0]);
+    if (method === "tooltip") tooltips.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "agents", `${source}; return Spaces;`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -41,14 +43,14 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
       moves.push(args);
     },
     ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
-    ScrollHandle, theme, () => env.layout, () => {},
+    ScrollHandle, theme, () => env.layout, () => {}, () => agentList,
   );
   const view = new Spaces();
   view.reconnecting = {};
   view.folded = new Set(["cloud"]);
   view.refreshMachines = () => {};
   const cx = { timer: { every() {} }, notify() {}, spawn(fn: (cx: unknown) => Promise<unknown>) { tasks.push(fn(cx)); } };
-  return { view, calls, tasks, cx, storage, moves, handlers, snapshot, availability, env, tracked, labels };
+  return { view, calls, tasks, cx, storage, moves, handlers, snapshot, availability, env, tracked, labels, tooltips };
 }
 
 test("git grouping reads refs for normal, detached, unborn and bare worktrees", async () => {
@@ -592,4 +594,47 @@ test("space rows keep the full label and omit matching git details after an emoj
   expect(rowLabels("🐼 Herdr-App")).toEqual(["🐼", "🐼 Herdr-App", "topic", "↑2"]);
   expect(rowLabels("✌🏻 topic")).toEqual(["✌🏻", "✌🏻 topic", "herdr-app", "↑2"]);
   expect(rowLabels("🐼 topic", "└─")).toEqual(["🐼 topic", "↑2"]);
+});
+
+test("a rail avatar shows its space's agents: a ring while one works, a dot for needs you, else done", () => {
+  const railState = new Function("View", `${source}; return railState;`)(class {});
+  const claude = { name: "Claude" }, codex = { name: "Codex" };
+  const w = { id: "s1", name: "tallyport", status: null };
+  const agent = (status: string, program: unknown = claude, space = "s1") => ({ space, status, program });
+  expect(railState(w, [])).toEqual({ working: false, dot: null, tip: "tallyport" });
+  expect(railState(w, [agent("working")])).toEqual({ working: true, dot: null, tip: "tallyport · Claude working" });
+  expect(railState(w, [agent("done"), agent("working", codex)])).toEqual({ working: true, dot: "done", tip: "tallyport · Claude done, Codex working" });
+  // Needs you wins the dot over done; a working agent still spins beside it.
+  expect(railState(w, [agent("done"), agent("blocked", codex), agent("working")])).toMatchObject({ working: true, dot: "blocked" });
+  expect(railState(w, [agent("blocked")]).tip).toBe("tallyport · Claude needs you");
+  expect(railState(w, [agent("idle")])).toEqual({ working: false, dot: null, tip: "tallyport · Claude idle" });
+  // Another space's agents stay off this avatar.
+  expect(railState(w, [agent("blocked", claude, "s2")])).toEqual({ working: false, dot: null, tip: "tallyport" });
+  // The space's own status counts too (an agent the list doesn't carry).
+  expect(railState({ ...w, status: "blocked" }, []).dot).toBe("blocked");
+});
+
+test("the rail draws one avatar per space with its ctrl-number hint and a tooltip; the wide list draws none of that", () => {
+  const ids = Array.from({ length: 10 }, (_, i) => `s${i + 1}`);
+  const list = spaceList(ids, "s2").map((s, i) => ({ ...s, name: i === 0 ? "tallyport" : s.name }));
+  const agentList = [{ space: "s1", status: "working", program: { name: "Claude" } }];
+  const h = harness([], new Map(), list, undefined, undefined, agentList);
+  Object.assign(h.view, { git: {}, checked: {}, unsure: new Set(), pending: new Set(), watching: new Map(), folded: new Set(), machines: [] });
+  h.view.shown = new Set(ids);
+  h.view.born = {};
+  h.view.scroll = { scroll_to_item() {} };
+  h.env.layout = { id: "sidebar", size: { px: 76 } };
+  h.view.render();
+  expect(h.tooltips).toEqual(["tallyport · Claude working", ...ids.slice(1)]);
+  expect(h.labels).toContain("T");
+  // ctrl-1 to ctrl-9 select the first nine spaces: the tenth has no hint.
+  for (let n = 1; n <= 9; n++) expect(h.labels).toContain(String(n));
+  expect(h.labels).not.toContain("10");
+  h.labels.length = 0;
+  h.tooltips.length = 0;
+  h.env.layout = { id: "sidebar", size: { px: 268 } };
+  h.view.render();
+  expect(h.tooltips).toEqual([]);
+  expect(h.labels).toContain("tallyport");
+  expect(h.labels).not.toContain("1");
 });
