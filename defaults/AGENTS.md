@@ -969,7 +969,10 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   mod showing it, including images that were missing or invalid on first load.
 - The defaults are mods too, read them as examples: `spaces`, `agents`,
   `tabs` (the tab bar), `menu`, `prompt`, `confirm`, `help`, `toast`,
-  Terminals' `picker`, `peek`, and `pane` (an
+  Terminals' `picker`, `peek`, `projects` (Open a project, cmd-O on Mac,
+  ctrl-shift-G elsewhere: the git repos under the folders in `projects.json`
+  in Herdr's folder, `{"roots": ["~/Lab"], "depth": 3, "folders": []}` by
+  default; Enter goes to the repo's space or makes one there), and `pane` (an
   example pane header, not used by the default layouts), and `worktree`
   (git worktrees as spaces: the space menu's and the + menu's New worktree,
   Open worktree (the repo's checkouts, filtered; one already shown is gone
