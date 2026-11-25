@@ -12,9 +12,10 @@ function find(node, id) {
   return null;
 }
 
-// The `tab_button` of each mods/<name>/mod.json: { mod, title, icon, toggle }. Unreadable
-// or malformed ones are skipped.
-async function tabButtons() {
+// The `panel` of each mods/<name>/mod.json: { mod, title, icon }. Herdr adds such a mod
+// to the side panel as `panel-<name>`, beside Files and Changes. Unreadable or malformed
+// ones are skipped.
+async function modPanels() {
   const dir = `${appHome()}/mods`;
   let names;
   try {
@@ -25,11 +26,10 @@ async function tabButtons() {
   const found = [];
   for (const mod of names) {
     try {
-      const b = JSON.parse(await readFile(`${dir}/${mod}/mod.json`, "utf8")).tab_button;
-      if (!b || typeof b !== "object" || typeof b.title !== "string" || !b.title.trim()) continue;
-      const icon = typeof b.icon === "string" && /^[\w.-]+\.svg$/.test(b.icon) ? `mods/${mod}/${b.icon}` : null;
-      const toggle = typeof b.toggle === "string" && b.toggle.trim() ? `${mod}.${b.toggle.trim()}` : null;
-      found.push({ mod, title: b.title.trim(), icon, toggle });
+      const p = JSON.parse(await readFile(`${dir}/${mod}/mod.json`, "utf8")).panel;
+      if (!p || typeof p !== "object" || typeof p.title !== "string" || !p.title.trim()) continue;
+      const icon = typeof p.icon === "string" && /^[\w.-]+\.svg$/.test(p.icon) ? `mods/${mod}/${p.icon}` : null;
+      found.push({ id: `panel-${mod}`, title: p.title.trim(), icon });
     } catch {}
   }
   return found;
@@ -53,21 +53,21 @@ function label(tab, lead) {
 
 export default class Tabs extends View {
   init(_props, cx) {
-    if (!checking()) cx.spawn((cx) => this.watchButtons(cx));
+    if (!checking()) cx.spawn((cx) => this.watchPanels(cx));
     this.pressed = null;
     this.scroll = ScrollHandle.new();
     try { this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}"); } catch { this.panels = {}; }
     if (!this.panels || typeof this.panels !== "object" || Array.isArray(this.panels)) this.panels = {};
     this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
-    this.buttons = [];
+    this.modPanels = [];
   }
 
-  // Mods' own buttons, reread when a file under mods/ changes.
-  async watchButtons(cx) {
+  // Mods' own panels, reread when a file under mods/ changes.
+  async watchPanels(cx) {
     for (;;) {
-      const buttons = await tabButtons();
-      if (JSON.stringify(buttons) !== JSON.stringify(this.buttons)) {
-        this.buttons = buttons;
+      const found = await modPanels();
+      if (JSON.stringify(found) !== JSON.stringify(this.modPanels)) {
+        this.modPanels = found;
         cx.notify();
       }
       await watchFolder(`${appHome()}/mods`);
@@ -168,7 +168,9 @@ export default class Tabs extends View {
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
     const enabled = shared("workspace.panels") ?? ["files", "changes"];
-    this.syncPanel(space, panel, body, enabled);
+    // Mods' panels show while Herdr has added them to the panel.
+    const mine = this.modPanels.filter((p) => body?.children?.some((c) => c.id === p.id));
+    this.syncPanel(space, panel, body, [...enabled, ...mine.map((p) => p.id)]);
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
       return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
@@ -177,26 +179,7 @@ export default class Tabs extends View {
         .on_click(() => {
           if (on) run("layout.hide", { id: "panel" });
           else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
-        }).child(svg(icon).size(14)).child(label);
-    };
-    // A mod's button adds the mod as a pane at the right of the tab; with one there, it
-    // runs the mod's toggle command, or closes the pane when it has none.
-    const tab = space?.tabs.find((x) => x.active);
-    const modButton = ({ mod, title, icon, toggle }) => {
-      const mine = panes().filter((p) => p.tab === tab?.id);
-      const own = mine.find((p) => p.mod === mod);
-      const count = shared(`${mod}.badge`);
-      return h_flex().id(`mod-${mod}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
-        .text_size(12).bg(own ? t.selected : t.chrome).text_color(own ? t.foreground : t.muted)
-        .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
-        .on_click(() => {
-          if (own && toggle) run(toggle);
-          else if (own) run("pane.close", { pane: own.pane });
-          else if (mine.length) run("pane.split", { direction: "right", mod, pane: mine[mine.length - 1].pane });
-        })
-        .when(Boolean(icon), el => el.child(svg(icon).size(14)))
-        .child(title)
-        .when(typeof count === "number" && count > 0, el => el.child(div().px(5).rounded(7).bg(t.blocked).text_size(10.5).text_color(t.solid_foreground).child(String(count))));
+        }).when(Boolean(icon), el => el.child(svg(icon).size(14))).child(label);
     };
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
@@ -207,7 +190,7 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
-      .children(this.buttons.map(modButton))
+      .children(mine.map((p) => panelButton(p.id, p.title, p.icon)))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
