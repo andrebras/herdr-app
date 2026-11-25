@@ -6,16 +6,20 @@
 // Where it looks: projects.json in Herdr's folder,
 //   { "roots": ["~/Lab"], "depth": 3, "folders": ["~/notes"] }
 // roots are searched for repos `depth` folders down; folders are listed as they are.
-// Without the file: ~/Lab, 3 deep. It looks again each time it opens.
+// Without the file: ~/Lab, 3 deep. It looks again each time it opens. It reads folders
+// itself (no `find`, so it works the same on every system), skipping hidden folders and
+// node_modules, and only in your home folder, where mods may read.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { readFile } from "fs/promises";
-import { spaces, panes, run, exec, theme, props, closeOverlay, home, appHome } from "herdr";
+import { readFile, readdir, exists } from "fs/promises";
+import { spaces, panes, run, theme, props, closeOverlay, home, appHome } from "herdr";
 
 const DEFAULTS = { roots: ["~/Lab"], depth: 3, folders: [] };
 // How many matches show: the best ones, as a fuzzy finder does.
 const SHOWN = 12;
+// At most this many folders are looked at per search, so a huge root can't stall it.
+const MAX_FOLDERS = 5000;
 
 export default class Projects extends View {
   init(_props, cx) {
@@ -44,14 +48,23 @@ export default class Projects extends View {
 
   // Open spaces on this computer, then the projects without one, best matches first.
   rows() {
-    const open = spaces().filter((s) => !s.machine);
-    const rows = open.map((s) => ({ kind: "space", space: s, name: s.name, path: liveFolder(s) }));
-    const taken = new Set(rows.map((r) => r.path));
+    const local = localSpaces();
+    const rows = local.map(({ space, folders }) => ({ kind: "space", space, name: space.name, path: folders[0] ?? "" }));
     for (const path of this.repos ?? []) {
-      if (!taken.has(path) && !spaceFor(path)) rows.push({ kind: "project", name: base(path), path });
+      if (!spaceFor(path, local)) rows.push({ kind: "project", name: base(path), path });
     }
-    const f = this.filter.trim().toLowerCase();
+    const typed = this.filter.trim();
+    const f = typed.toLowerCase();
     if (!f) return rows.slice(0, SHOWN);
+    // A typed path: that folder first, then what is inside it.
+    if (isPath(typed)) {
+      const path = trim(expand(typed));
+      const key = (p) => p.toLowerCase();
+      const same = rows.find((r) => key(r.path) === key(path));
+      const inside = rows.filter((r) => r !== same && key(r.path).startsWith(key(join(path, ""))));
+      const first = same ?? { kind: "folder", name: base(path), path };
+      return [first, ...inside].slice(0, SHOWN);
+    }
     return rows
       .map((r) => ({ r, s: score(f, r.name.toLowerCase(), short(r.path).toLowerCase()) }))
       .filter((x) => x.s > 0)
@@ -61,27 +74,26 @@ export default class Projects extends View {
   }
 
   async go(r, cx) {
-    if (!r) return this.openTyped(cx);
+    if (!r) return;
+    if (r.kind === "folder") return this.openTyped(r.path, cx);
     this.close();
     if (r.kind === "space") return run("space.select", { id: r.space.id });
-    const there = spaceFor(r.path);
+    const there = spaceFor(r.path, localSpaces());
     if (there) run("space.select", { id: there.id });
     else run("space.new", { folder: r.path, name: r.name });
   }
 
-  // Nothing matched: a typed folder that exists opens; anything else does nothing.
-  async openTyped(cx) {
-    const typed = this.filter.trim();
-    if (!/^[~/]/.test(typed)) return;
-    const path = expand(typed).replace(/\/+$/, "") || "/";
-    const r = await exec("test", ["-d", path]).catch(() => ({ code: 1 }));
-    if (r.code !== 0) {
-      this.missing = typed;
+  // A typed folder opens when it exists; otherwise the popup says so and stays. Mods may
+  // only read in the home folder, so a folder elsewhere opens unchecked, and Herdr says
+  // so if it isn't there.
+  async openTyped(path, cx) {
+    if (inHome(path) && !(await isFolder(path))) {
+      this.missing = this.filter.trim();
       cx.notify();
       return;
     }
     this.close();
-    const there = spaceFor(path);
+    const there = spaceFor(path, localSpaces());
     if (there) run("space.select", { id: there.id });
     else run("space.new", { folder: path, name: base(path) });
   }
@@ -90,15 +102,16 @@ export default class Projects extends View {
     const t = theme();
     const rows = this.rows();
     this.at = Math.max(0, Math.min(this.at, rows.length - 1));
-    const typed = /^[~/]/.test(this.filter.trim());
     const empty =
       this.repos === null
         ? "Looking for projects…"
-        : typed
-          ? this.missing === this.filter.trim()
-            ? "No such folder."
-            : "Enter opens this folder."
-          : "No project matches.";
+        : this.filter.trim()
+          ? "No project matches. Type a path (~/code/app) to open any folder."
+          : "No projects found. List your folders in projects.json in Herdr's folder.";
+    const missing = this.missing !== undefined && this.missing === this.filter.trim();
+    const glyph = { space: "●", project: "○", folder: "+" };
+    const note = (r) =>
+      r.kind === "space" ? "open" : r.kind === "folder" ? (missing ? "no such folder" : "open this folder") : null;
     const row = (r, i) =>
       h_flex()
         .id(`pj-${i}`)
@@ -112,10 +125,18 @@ export default class Projects extends View {
         .when(i === this.at, (el) => el.bg(t.hover))
         .hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => cx.spawn((cx) => this.go(r, cx)))
-        .child(div().w(12).flex_none().text_color(r.kind === "space" ? t.accent : t.dim).child(r.kind === "space" ? "●" : "○"))
+        .child(div().w(12).flex_none().text_color(r.kind === "space" ? t.accent : t.dim).child(glyph[r.kind]))
         .child(div().flex_none().max_w(220).truncate().text_color(t.foreground).child(r.name))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(short(r.path)))
-        .when(r.kind === "space", (el) => el.child(div().flex_none().text_size(11).text_color(t.muted).child("open")));
+        .when(Boolean(note(r)), (el) =>
+          el.child(
+            div()
+              .flex_none()
+              .text_size(11)
+              .text_color(r.kind === "folder" && missing ? t.blocked : t.muted)
+              .child(note(r)),
+          ),
+        );
     return v_flex()
       .id("projects")
       .track_focus(this.handle)
@@ -189,43 +210,70 @@ async function config() {
   }
 }
 
-// Every repo (a folder with .git, a worktree's file included) under the roots, plus the
-// listed folders. A repo inside another one (a submodule, a vendored checkout) is left out.
+// Every repo (a folder with .git, a worktree's .git file included) under the roots,
+// plus the listed folders. A repo's own folders aren't searched, so a submodule or a
+// vendored checkout inside it is left out.
 async function findProjects({ roots, depth, folders }) {
-  const found = new Set();
-  for (const root of roots) {
-    const dir = expand(root);
-    const r = await exec("find", [dir, "-mindepth", "2", "-maxdepth", String(depth + 1), "-name", ".git", "-prune"], {
-      timeout: 10000,
-    }).catch(() => null);
-    for (const line of (r?.stdout ?? "").split("\n")) {
-      if (line.endsWith("/.git")) found.add(line.slice(0, -5));
+  const found = [];
+  let budget = MAX_FOLDERS;
+  const walk = async (dir, left) => {
+    if (budget-- <= 0) return;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return; // gone, unreadable, or outside the home folder
     }
+    for (const e of entries) {
+      if (e.name.startsWith(".") || e.name === "node_modules" || !e.isDirectory()) continue;
+      if (budget-- <= 0) return;
+      const sub = join(dir, e.name);
+      if (await exists(join(sub, ".git")).catch(() => false)) found.push(sub);
+      else if (left > 1) await walk(sub, left - 1);
+    }
+  };
+  for (const root of roots) await walk(trim(expand(root)), depth);
+  const listed = [];
+  for (const f of folders) {
+    const path = trim(expand(f));
+    if (!inHome(path) || (await isFolder(path))) listed.push(path);
   }
-  const repos = [...found].sort();
-  const top = repos.filter((p) => !repos.some((q) => q !== p && p.startsWith(`${q}/`)));
-  for (const f of folders) top.push(expand(f).replace(/\/+$/, ""));
-  return [...new Set(top)];
+  return [...new Set([...found.sort(), ...listed])];
 }
 
-// Where a space is now: its shown tab's focused terminal, else its first, else where it
-// was made (a space's folder is only where it started).
-function liveFolder(space) {
-  const shown = space.tabs.find((t) => t.active) ?? space.tabs[0];
-  const mine = panes().filter((p) => p.tab === shown?.id && p.cwd);
-  return (mine.find((p) => p.focused) ?? mine[0])?.cwd ?? space.folder ?? "";
+async function isFolder(path) {
+  try {
+    await readdir(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-// The space on this computer for a folder: made there, or with a terminal there now.
-function spaceFor(path) {
-  const mine = spaces().filter((s) => !s.machine);
-  const made = mine.find((s) => s.folder === path);
-  if (made) return made;
-  const inside = (cwd) => cwd === path || cwd?.startsWith(`${path}/`);
-  return mine.find((s) => {
-    const tabs = new Set(s.tabs.map((t) => t.id));
-    return panes().some((p) => tabs.has(p.tab) && inside(p.cwd));
-  });
+// The spaces on this computer, each with its folders: where it is now first (its shown
+// tab's focused terminal, else its first), then its other terminals' folders, then where
+// it was made. Read once per list, not once per project.
+function localSpaces() {
+  const all = panes();
+  return spaces()
+    .filter((s) => !s.machine)
+    .map((space) => {
+      const shown = space.tabs.find((t) => t.active) ?? space.tabs[0];
+      const tabs = new Set(space.tabs.map((t) => t.id));
+      const mine = all.filter((p) => tabs.has(p.tab) && p.cwd);
+      const here = mine.filter((p) => p.tab === shown?.id);
+      const now = (here.find((p) => p.focused) ?? here[0])?.cwd;
+      const folders = [now, ...mine.map((p) => p.cwd), space.folder].filter(Boolean);
+      return { space, folders: [...new Set(folders)] };
+    });
+}
+
+// The space on this computer for a folder: made there, else one with a terminal in it.
+function spaceFor(path, local) {
+  const made = local.find(({ space }) => space.folder === path);
+  if (made) return made.space;
+  const inside = (cwd) => cwd === path || cwd.startsWith(join(path, ""));
+  return local.find(({ folders }) => folders.some(inside))?.space;
 }
 
 // Higher is better, 0 is no match: the name starting with it, then containing it, then
@@ -234,8 +282,8 @@ function score(f, name, path) {
   if (name.startsWith(f)) return 400 - name.length;
   if (name.includes(f)) return 300 - name.length;
   if (inOrder(f, name)) return 200 - name.length;
-  if (path.includes(f)) return 150 - path.length / 10;
-  if (inOrder(f, path)) return 100 - path.length / 10;
+  if (path.includes(f)) return Math.max(101, 150 - path.length / 10);
+  if (inOrder(f, path)) return Math.max(1, 100 - path.length / 10);
   return 0;
 }
 
@@ -245,15 +293,41 @@ function inOrder(f, text) {
   return i === f.length;
 }
 
+// Paths use the system's separator: "\\" on Windows, where home() has one.
+function sep() {
+  return home().includes("\\") ? "\\" : "/";
+}
+
+function join(dir, name) {
+  return dir.endsWith(sep()) ? `${dir}${name}` : `${dir}${sep()}${name}`;
+}
+
+// A typed path: ~, /, \\ or a drive (C:\\).
+function isPath(text) {
+  return /^(~|[/\\]|[A-Za-z]:[/\\])/.test(text);
+}
+
 function expand(p) {
-  return p === "~" ? home() : p.startsWith("~/") ? `${home()}${p.slice(1)}` : p;
+  if (p === "~") return home();
+  return /^~[/\\]/.test(p) ? `${home()}${sep()}${p.slice(2)}` : p;
+}
+
+// Without a trailing separator, except for a root such as / or C:\\.
+function trim(p) {
+  const t = p.replace(/[/\\]+$/, "");
+  return t === "" ? p.slice(0, 1) : /^[A-Za-z]:$/.test(t) ? `${t}${sep()}` : t;
+}
+
+function inHome(p) {
+  const h = home();
+  return p === h || p.startsWith(join(h, ""));
 }
 
 function short(p) {
   const h = home();
-  return p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p;
+  return p === h ? "~" : p.startsWith(`${h}${sep()}`) ? `~${sep()}${p.slice(h.length + 1)}` : p;
 }
 
 function base(p) {
-  return p.split("/").filter(Boolean).pop() ?? p;
+  return p.split(/[/\\]/).filter(Boolean).pop() ?? p;
 }
