@@ -709,3 +709,14 @@ test("a row that only opens details does not hold the selection", () => {
   external.activate();
   expect(agents.navigationPending ?? null).toBeNull();
 });
+
+test("the agent details dialog offers terminal reveal only on macOS", () => {
+  for (const [platform, shown] of [["macos", true], ["linux", false]] as const) {
+    const { agents } = harness([], { window: () => ({ platform }), div: element, v_flex: element, h_flex: element, closeOverlay() {} });
+    const ids: string[] = [];
+    const walk = (node: any) => { if (node?.id) ids.push(node.id); node?.children?.forEach(walk); };
+    walk(agents.agentDetails({}, { name: "Claude Code", location: "This computer", pid: 30, tty: "ttys003", tmux: false }).node);
+    expect(ids.includes("reveal-terminal")).toBe(shown);
+    expect(ids.includes("agent-details-close")).toBe(true);
+  }
+});

@@ -227,7 +227,7 @@ export default class Agents extends View {
 
   focusDetected(agent) {
     const { tmux, pane } = agent;
-    const location = tmux?.label || (pane ? "Herdr" : "This computer");
+    const location = tmux?.label ?? "This computer";
     if (tmux && layoutHasMod(layout(), "spaces")) {
       const suffix = [tmux.server, tmux.session.slice(1), tmux.window.slice(1), tmux.pane.slice(1)].join("-");
       run(`spaces.open-tmux-agent-${suffix}`);
@@ -328,12 +328,12 @@ export default class Agents extends View {
   agentDetails(t, agent) {
     const button = (id, text, action) => div().id(id).px(9).py(6).rounded(6).bg(t.raised)
       .cursor_pointer().hover(el => el.bg(t.hover)).on_click(action).child(text);
+    // Revealing a tab drives Terminal and iTerm2 through osascript, which only macOS has.
     const reveal = !agent.tmux && window()?.platform === "macos" && Boolean(macTerminalDevice(agent.tty));
-    const help = reveal ? "Open the app that owns this terminal."
-      : agent.tty ? "Herdr has no pane to open for this agent." : "This process has no interactive terminal.";
+    const help = reveal ? "Open the app that owns this terminal." : "Herdr has no pane to open for this agent.";
     return v_flex().size_full().p(16).gap(9).text_color(t.foreground)
       .child(div().text_size(15).font_semibold().child(agent.name))
-      .child(div().text_size(12).text_color(t.muted).child(`${agent.location} · PID ${agent.pid}${agent.tty ? " · " + agent.tty : ""}`))
+      .child(div().text_size(12).text_color(t.muted).child(`${agent.location} · PID ${agent.pid} · ${agent.tty}`))
       .child(div().text_size(12).text_color(t.dim).child(this.revealMessage || help))
       .child(div().flex_1())
       .child(h_flex().gap(8)
