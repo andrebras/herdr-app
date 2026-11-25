@@ -701,3 +701,11 @@ test("a clicked or stepped-to row is selected at once and the list looks again s
   agents.followFocus("detected-agent-20", now);
   expect(agents.navigationPending).toBeNull();
 });
+
+test("a row that only opens details does not hold the selection", () => {
+  const { agents } = harness([], { openOverlay() {}, layout: () => null });
+  const external = agents.detectedModel({ pid: 30, name: "claude", tty: "s003" }, null, new Map(), false);
+  expect(external.navigate).toBeNull();
+  external.activate();
+  expect(agents.navigationPending ?? null).toBeNull();
+});

@@ -123,6 +123,8 @@ export default class Agents extends View {
     cx.timer.every(30000, (cx) => cx.notify());
     if (!checking()) {
       const poll = cx => {
+        // A hold focus never confirmed (a session that ended) is redrawn when it runs out.
+        if (this.navigationPending && Date.now() >= this.navigationPending.until) cx.notify();
         const win = window();
         // tmux and ps are Unix tools; Windows has neither, so nothing is polled there.
         if (!win?.visible || !["linux", "macos"].includes(win.platform) || Date.now() < this.nextDiscovery) return;
@@ -135,8 +137,11 @@ export default class Agents extends View {
       this.loadCatalog(cx);
       // A failed check is not cached, so try again until one answers.
       cx.timer.every(30000, cx => this.loadCatalog(cx));
-      cx.spawn(async () => {
-        for (;;) this.navigate(await nextCommand());
+      cx.spawn(async cx => {
+        for (;;) {
+          this.navigate(await nextCommand());
+          cx.notify();
+        }
       });
     }
   }
@@ -261,8 +266,10 @@ export default class Agents extends View {
     const pinKey = tmux?.start ? JSON.stringify([tmux.server, tmux.start, tmux.pane, agent.name]) : null;
     const context = contexts.get(agent.pane);
     const address = `detected-agent-${agent.pid}`;
+    // Only a row Herdr can focus waits for focus; one that opens details doesn't.
+    const focusable = tmux ? tmuxCanFocus : Boolean(agent.pane);
     const activate = (_e, cx) => {
-      this.hold(address);
+      if (focusable) this.hold(address);
       this.focusDetected(agent);
       cx?.notify();
     };
@@ -279,7 +286,7 @@ export default class Agents extends View {
       pinned: tmux ? this.tmuxPins.has(pinKey) : Boolean(agent.pinned),
       pin: pinKey ? pinned => this.pinTmux(pinKey, pinned)
         : !tmux && agent.terminal ? pinned => run("terminal.pin", { terminal: agent.terminal, pinned }) : null,
-      activate, navigate: (tmux ? tmuxCanFocus : Boolean(agent.pane)) ? activate : null,
+      activate, navigate: focusable ? activate : null,
     };
   }
 
