@@ -476,8 +476,7 @@ Sidebar on the right: swap the two children of `root`. No sidebar: set
 Narrower than 160px, the sidebar mods draw a compact rail; folding resizes
 `sidebar` to 44 (76 on macOS, room for the traffic lights). On the rail,
 `spaces` draws one avatar per space (its color and initial, its
-`space.select` number in a corner) and its agents on it: a spinning ring while
-one works, a dot when one needs you or is done, names in the tooltip; `agents`
+`space.select` number in a corner, its agents named in the tooltip); `agents`
 draws no rows there, only the unfold button. On macOS,
 the tabs also leave room for the window buttons when the sidebar is narrower.
 

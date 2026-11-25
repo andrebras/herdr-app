@@ -596,22 +596,31 @@ test("space rows keep the full label and omit matching git details after an emoj
   expect(rowLabels("🐼 topic", "└─")).toEqual(["🐼 topic", "↑2"]);
 });
 
-test("a rail avatar shows its space's agents: a ring while one works, a dot for needs you, else done", () => {
-  const railState = new Function("View", `${source}; return railState;`)(class {});
+test("a rail avatar's tooltip names the space and its agents", () => {
+  const railTip = new Function("View", `${source}; return railTip;`)(class {});
   const claude = { name: "Claude" }, codex = { name: "Codex" };
-  const w = { id: "s1", name: "tallyport", status: null };
-  const agent = (status: string, program: unknown = claude, space = "s1") => ({ space, status, program });
-  expect(railState(w, [])).toEqual({ working: false, dot: null, tip: "tallyport" });
-  expect(railState(w, [agent("working")])).toEqual({ working: true, dot: null, tip: "tallyport · Claude working" });
-  expect(railState(w, [agent("done"), agent("working", codex)])).toEqual({ working: true, dot: "done", tip: "tallyport · Claude done, Codex working" });
-  // Needs you wins the dot over done; a working agent still spins beside it.
-  expect(railState(w, [agent("done"), agent("blocked", codex), agent("working")])).toMatchObject({ working: true, dot: "blocked" });
-  expect(railState(w, [agent("blocked")]).tip).toBe("tallyport · Claude needs you");
-  expect(railState(w, [agent("idle")])).toEqual({ working: false, dot: null, tip: "tallyport · Claude idle" });
+  const agent = (status: string, program = claude, space = "s1") => ({ space, status, program });
+  const w = { id: "s1", name: "tallyport" };
+  expect(railTip(w, [])).toBe("tallyport");
+  expect(railTip(w, [agent("working")])).toBe("tallyport \u00b7 Claude working");
+  expect(railTip(w, [agent("done"), agent("blocked", codex)])).toBe("tallyport \u00b7 Claude done, Codex needs you");
+  expect(railTip(w, [agent("idle", { name: "" })])).toBe("tallyport \u00b7 Agent idle");
   // Another space's agents stay off this avatar.
-  expect(railState(w, [agent("blocked", claude, "s2")])).toEqual({ working: false, dot: null, tip: "tallyport" });
-  // The space's own status counts too (an agent the list doesn't carry).
-  expect(railState({ ...w, status: "blocked" }, []).dot).toBe("blocked");
+  expect(railTip(w, [agent("blocked", claude, "s2")])).toBe("tallyport");
+});
+
+test("a rail avatar draws no agent status: no spinning ring and no dot", () => {
+  const svgs: string[] = [];
+  const element: any = new Proxy({}, { get: (_, method) => (...args: any[]) => {
+    if (method === "when" && args[0]) args[1](element);
+    return element;
+  } });
+  const Spaces = new Function("View", "h_flex", "div", "svg", "shared", "run", "theme", `${source}; return Spaces;`)(
+    class {}, () => element, () => element, (path: string) => { svgs.push(path); return element; }, () => null, () => {}, () => ({}),
+  );
+  const list = ["working", "blocked", "done"].map((status) => ({ space: "s1", status, program: { name: "Claude" } }));
+  new Spaces().compact({ w: { id: "s1", name: "tallyport", status: "blocked", active: true }, i: 0 }, { working: "W", blocked: "B", done: "D" }, list);
+  expect(svgs).toEqual([]);
 });
 
 test("the rail draws one avatar per space with its ctrl-number hint and a tooltip; the wide list draws none of that", () => {
