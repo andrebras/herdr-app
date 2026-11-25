@@ -75,12 +75,13 @@ function duration(ms) {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
-// A space's colour (shared "space.colors", as the spaces mod draws its avatar), faded so
-// an icon reads on it; null when the space has none.
+// A space's colour, as the spaces mod draws its avatar (shared "space.colors", "ansi6"
+// until one is stored), faded so an icon reads on it; null without a space.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
-function spaceTint(t, space) {
-  const color = (shared("space.colors") ?? {})[space];
-  if (typeof color !== "string") return null;
+function spaceTint(t, space, colors) {
+  if (!space) return null;
+  const stored = colors[space];
+  const color = typeof stored === "string" ? stored : "ansi6";
   const hex = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
   return typeof hex === "string" && /^#[0-9a-f]{6}$/i.test(hex) ? `${hex}55` : hex;
 }
@@ -221,7 +222,8 @@ export default class Agents extends View {
   // One agent on the rail: its program's icon on a round tile in its space's colour (so it
   // matches that space's avatar above), a spinning ring while it works, a dot when it
   // needs you or is done, its agent number in a corner, the rest in a tooltip.
-  railCell(t, a, pic, tooltip, number) {
+  // `colors` is the shared "space.colors", read once per render.
+  railCell(t, a, pic, tooltip, number, colors) {
     const dot = a.status === "blocked" || a.status === "done" ? a.status : null;
     // Centred and as wide as a space's rail cell (spaces' RAIL_CELL), so they line up.
     return h_flex().flex_none().justify_center().child(h_flex()
@@ -241,7 +243,7 @@ export default class Agents extends View {
       .child(h_flex().relative().size(28).flex_none().items_center().justify_center()
         .when(a.status === "working", (el) => el.child(svg("mods/agents/ring.svg").absolute().top(0).left(0).size(28).text_color(t.working).spin(900)))
         .child(h_flex().size(22).flex_none().rounded(11).items_center().justify_center()
-          .bg(spaceTint(t, a.space) ?? t.raised ?? t.hover)
+          .bg(spaceTint(t, a.space, colors) ?? t.raised ?? t.hover)
           .when(!a.focused && a.status === "idle", (el) => el.opacity(0.7))
           .when(Boolean(pic), (el) => el.child(pic)))
         .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
@@ -266,6 +268,8 @@ export default class Agents extends View {
     const t = theme();
     if (props()?.sortMenu) return this.sortMenu(t);
     const collapsed = narrow();
+    // Read once: every host read copies the whole map.
+    const colors = collapsed ? (shared("space.colors") ?? {}) : {};
     const sort = sortOf();
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
@@ -348,7 +352,7 @@ export default class Agents extends View {
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
-      if (collapsed) return this.railCell(t, a, pic, [a.program?.name, a.space_name, more, machine].filter(Boolean).join(" \u00b7 "), i + 1);
+      if (collapsed) return this.railCell(t, a, pic, [a.program?.name, a.space_name, more, machine].filter(Boolean).join(" \u00b7 "), i + 1, colors);
       const when = this.since(a);
       const idle = a.status === "idle" && !a.focused;
       const isPinned = a.pinned;

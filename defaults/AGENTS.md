@@ -479,7 +479,7 @@ Narrower than 160px, the sidebar mods draw a compact rail; folding resizes
 `space.select` number in a corner, its agents named in the tooltip); `agents`
 draws one cell per agent: its program's icon on its space's color, a spinning
 ring while it works, a dot when it needs you or is done, its `agent.select`
-number in a corner, details in the tooltip. On macOS,
+number in a corner, details in the tooltip (idle agents dimmed). On macOS,
 the tabs also leave room for the window buttons when the sidebar is narrower.
 
 ### Layouts and mods other people made

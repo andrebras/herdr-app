@@ -382,9 +382,10 @@ test("a rail cell shows its agent on its space's colour, a ring while working, a
   walk(agents.render({}).node);
   expect([...cells.keys()]).toEqual(["ag-t1", "ag-t2", "ag-t3", "ag-t4"]);
   const fills = (node: any): unknown[] => [node?.bg, ...(node?.children ?? []).flatMap(fills)].filter(Boolean);
-  // The space's palette colour, faded; a space without one gets a neutral tile.
+  // The space's palette colour, faded; a space without a stored one gets the default
+  // teal, as the spaces mod draws its avatar.
   expect(fills(cells.get("ag-t1"))).toContain("#5b8def55");
-  expect(fills(cells.get("ag-t4"))).toContain("R");
+  expect(fills(cells.get("ag-t4"))).toContain("#22a99a55");
   // One ring, on the working agent; a dot in the status colour on the blocked and done ones.
   expect(svgs.filter((p) => p === "mods/agents/ring.svg")).toHaveLength(1);
   expect(fills(cells.get("ag-t1"))).not.toContain("B");
