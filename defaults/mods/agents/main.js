@@ -85,17 +85,18 @@ function duration(ms) {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
-// The agent's icon from the app's program table: a one-color glyph or a picture.
-// A space's colour (shared "space.colors", as the spaces mod draws its avatar), faded so
-// an icon reads on it; null for a group that isn't a Herdr space.
+// A Herdr space's colour, as the spaces mod draws its avatar (shared "space.colors",
+// "ansi6" until one is stored), faded so an icon reads on it; null for a group that
+// isn't a Herdr space (a tmux session, a detected agent outside Herdr).
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
-function spaceTint(t, space) {
-  const color = (shared("space.colors") ?? {})[space];
-  if (!color) return null;
+function spaceTint(t, space, colors, spaceIds) {
+  if (!spaceIds.has(space)) return null;
+  const color = colors[space] ?? "ansi6";
   const hex = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
   return typeof hex === "string" && /^#[0-9a-f]{6}$/i.test(hex) ? `${hex}55` : hex;
 }
 
+// The agent's icon from the app's program table: a one-color glyph or a picture.
 function icon(p, size, color) {
   if (!p?.icon) return null;
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
@@ -465,13 +466,13 @@ export default class Agents extends View {
       .child(this.status(t, { status: st }, compact));
   }
 
-  // compact: a ! for blocked where a header already says "Needs you".
   // One agent on the rail: its program's icon on a tile in its space's colour (so it
   // matches that space's avatar above), a spinning ring while it works, a dot when it
   // needs you or is done, its agent number in a corner, the rest in a tooltip. Agents
-  // Herdr only detected (outside its terminals) are dimmed: their status is unknown.
-  railCell(t, a, pic, tooltip, number) {
-    const tint = spaceTint(t, a.group);
+  // Herdr only detected (outside its terminals) are dimmed, idle ones a little.
+  // `tints` is read once per render: { colors, spaceIds }.
+  railCell(t, a, pic, tooltip, number, tints) {
+    const tint = spaceTint(t, a.group, tints.colors, tints.spaceIds);
     const known = a.status !== "unknown";
     const dot = a.status === "blocked" || a.status === "done" ? a.status : null;
     // Centred and as wide as a space's rail cell (spaces' RAIL_CELL), so they line up.
@@ -498,10 +499,11 @@ export default class Agents extends View {
           .child(pic))
         .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
           .border(2).border_color(t.chrome).bg(t[dot])))
-        .when(number !== undefined && number <= 9, (el) => el.child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
+        .when(number !== undefined, (el) => el.child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
           .text_size(8.5).font_bold().text_color(a.focused ? t.foreground : t.dim).child(String(number))))));
   }
 
+  // compact: a ! for blocked where a header already says "Needs you".
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "unknown") return div().w(13).flex_none().text_center().text_color(t.dim)
@@ -604,6 +606,8 @@ export default class Agents extends View {
     this.navigation = ordered.filter(a => a.navigate);
     this.followFocus(this.navigation.find(a => a.focused)?.address ?? shown, now);
     if (this.navigationPending) for (const a of ordered) a.focused = a.address === this.navigationPending.address;
+    // Read once: every host read copies the whole map or list.
+    const tints = collapsed ? { colors: shared("space.colors") ?? {}, spaceIds: new Set(spaces().map((s) => s.id)) } : null;
     const navigationIndices = new Map(this.navigation.map((a, i) => [a.address, i + 1]));
     setAgentOrder(ordered.filter(a => a.reported).map(a => a.address),
       this.navigation.some(a => !a.reported) ? this.navigation.length : undefined);
@@ -639,7 +643,7 @@ export default class Agents extends View {
       const pic = icon(a.program, 16, t.foreground);
       const more = a.detail;
       const tooltip = [a.program?.name, a.spaceName, more, a.location, a.status === "unknown" ? "Status unavailable" : null].filter(Boolean).join(" · ");
-      if (collapsed) return this.railCell(t, a, pic, tooltip, navigationIndices.get(a.address));
+      if (collapsed) return this.railCell(t, a, pic, tooltip, navigationIndices.get(a.address), tints);
       const when = a.since;
       const muted = (a.status === "idle" || a.status === "unknown") && !a.focused;
       const isPinned = a.pinned;
@@ -734,10 +738,7 @@ export default class Agents extends View {
       if (!this.folded.has(a.address)) rows.push(...a.children.map(child => this.subRow(t, child, shown, byPriority)));
     };
     if (collapsed) {
-      ordered.forEach((a) => {
-        if (a.focused) selectedAt = rows.length;
-        rows.push(row(a));
-      });
+      ordered.forEach(add); // no sub-agent rows on the rail: children is empty there
     } else {
       for (const group of groups) {
         const folded = this.folded.has(group.id);

@@ -289,27 +289,34 @@ test("a kept sub-agent keeps its own done status; a pane-less one stays idle", (
   expect(kidStatus({ address: "t4", status: "working" }, listed)).toBe("working");
 });
 
-test("the focused agent's row is marked as selected", () => {
+for (const width of [268, 44]) test(`the focused agent's row is marked as selected and scrolled to ${width < 160 ? "on the rail" : "in the wide list"}`, () => {
   const program = { name: "Claude", key: "claude", agent: true };
   const list = ["t1", "t2"].map((address, i) => ({
     address, pane: `p-${address}`, tab: address, space: "s1", space_name: "Project",
     program, title: address, status: "idle", seq: i, focused: address === "t2",
   }));
+  const scrolled: number[] = [];
   const { agents } = harness([], {
     agents: () => list, terminals: () => list.map(a => ({ ...a, state: "live", labels: {} })),
     panes: () => list.map(a => ({ ...a, terminal: a.address })), focused: () => ({ agent: "t2" }),
-    spaces: () => [{ tabs: list.map(a => ({ id: a.tab, name: a.address, named: true })) }],
-    layout: () => ({ id: "sidebar", size: { px: 268 } }), shared: () => "grouped",
+    spaces: () => [{ id: "s1", tabs: list.map(a => ({ id: a.tab, name: a.address, named: true })) }],
+    layout: () => ({ id: "sidebar", size: { px: width } }), shared: (key: string) => (key === "space.colors" ? {} : "grouped"),
     theme: () => ({ selected: "selected", hover: "hover" }), setAgentOrder() {},
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
+    ScrollHandle: { new: () => ({ scroll_to_item: (i: number) => scrolled.push(i) }) },
   });
   const fills = new Map<string, unknown>();
+  const tiles: unknown[] = [];
   const walk = (node: any) => {
     if (node?.id?.startsWith("ag-t")) fills.set(node.id, node.bg);
+    if (typeof node?.bg === "string" && node.bg.startsWith("#")) tiles.push(node.bg);
     (node?.children ?? []).forEach(walk);
   };
   walk(agents.render({}).node);
   expect([...fills]).toEqual([["ag-t1", undefined], ["ag-t2", "selected"]]);
+  expect(scrolled.at(-1)).toBe(width < 160 ? 1 : 2);
+  // On the rail, an agent's tile takes its space's colour, the default one when none is stored.
+  if (width < 160) expect(tiles).toEqual(["#22a99a55", "#22a99a55"]);
 });
 
 test("a title that opens with a bracket keeps it; each agent's own prefix still goes", () => {

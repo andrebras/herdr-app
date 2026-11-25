@@ -1,7 +1,7 @@
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
 // its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here,
-// except on the narrow rail, where each avatar carries its space's agents. Click to switch, right-click for its menu,
+// except on the narrow rail, where each avatar names its space's agents in its tooltip. Click to switch, right-click for its menu,
 // drag to reorder.
 
 import { View, div, svg } from "gpui-kit";
@@ -76,7 +76,7 @@ function fillOf(t, w) {
   return color.startsWith("#") ? color : (MARK[color] ?? t[color]);
 }
 
-const SAYS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
+const SAYS = { working: "working", blocked: "needs you", done: "done", idle: "idle", unknown: "status unknown" };
 
 // A space's tooltip on the rail: its name and its agents ("api · Claude working, Codex
 // needs you"). Their status itself shows on their own rail cells (the agents mod).
@@ -749,7 +749,9 @@ export default class Spaces extends View {
   // its agents named in a tooltip. Their status shows once, on their own cells (agents).
   compact({ w, i }, t, list, ownsTmux = false) {
     const on = w.active;
-    return railCell(h_flex()
+    // The tmux host's chevron goes under its cell, not over the avatar, so a click on
+    // the avatar always selects the space.
+    return railCell(v_flex().items_center().child(h_flex()
       .id(`space-${w.id}`)
       .relative()
       .w(RAIL_CELL)
@@ -769,7 +771,8 @@ export default class Spaces extends View {
           .text_size(11.5).font_bold().text_color("#ffffff").child(spaceAvatar(w.name)))
         .when(i < 9, (el) => el.child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
           .text_size(8.5).font_bold().text_color(on ? t.foreground : t.dim).child(String(i + 1)))))
-      .when(ownsTmux, (el) => el.child(div().absolute().right(-5).child(this.tmuxChevron(t, w.id)))));
+)
+      .when(ownsTmux, (el) => el.child(this.tmuxChevron(t, w.id))));
   }
 
   render() {
