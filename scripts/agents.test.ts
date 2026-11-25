@@ -266,7 +266,6 @@ for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent unde
 });
 
 for (const sort of ["priority", "grouped"]) test(`${sort}: a kept sub-agent keeps its own row where no tree shows it`, () => {
-  expect(keptRender(sort, { width: 44 }).ids).toContain("ag-t3"); // the rail draws no trees
   const pinned = keptRender(sort, { pinned: ["t3"] });
   expect(pinned.ids).toContain("ag-t3");
   expect(pinned.texts.get("ag-t1")).toContain("Task t1");
@@ -289,7 +288,7 @@ test("a kept sub-agent keeps its own done status; a pane-less one stays idle", (
   expect(kidStatus({ address: "t4", status: "working" }, listed)).toBe("working");
 });
 
-for (const width of [268, 44]) test(`the focused agent's row is marked as selected ${width < 160 ? "in the rail" : "in the wide list"}`, () => {
+test("the focused agent's row is marked as selected", () => {
   const program = { name: "Claude", key: "claude", agent: true };
   const list = ["t1", "t2"].map((address, i) => ({
     address, pane: `p-${address}`, tab: address, space: "s1", space_name: "Project",
@@ -299,7 +298,7 @@ for (const width of [268, 44]) test(`the focused agent's row is marked as select
     agents: () => list, terminals: () => list.map(a => ({ ...a, state: "live", labels: {} })),
     panes: () => list.map(a => ({ ...a, terminal: a.address })), focused: () => ({ agent: "t2" }),
     spaces: () => [{ tabs: list.map(a => ({ id: a.tab, name: a.address, named: true })) }],
-    layout: () => ({ id: "sidebar", size: { px: width } }), shared: () => "grouped",
+    layout: () => ({ id: "sidebar", size: { px: 268 } }), shared: () => "grouped",
     theme: () => ({ selected: "selected", hover: "hover" }), setAgentOrder() {},
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
   });
@@ -719,4 +718,11 @@ test("the agent details dialog offers terminal reveal only on macOS", () => {
     expect(ids.includes("reveal-terminal")).toBe(shown);
     expect(ids.includes("agent-details-close")).toBe(true);
   }
+});
+
+for (const sort of ["priority", "grouped"]) test(`${sort}: the rail draws no agent rows (they show on the space avatars) but still orders agents`, () => {
+  const { ids, order } = keptRender(sort, { width: 44, statuses: { t1: "blocked" } });
+  expect(ids.filter((id) => /^(ag-t|sub-|sec-|sp-)/.test(id))).toEqual([]);
+  expect(ids).toContain("collapse");
+  expect(order).toEqual(["t1", "t3"]);
 });

@@ -593,24 +593,6 @@ export default class Agents extends View {
       const pic = icon(a.program, 16, t.foreground);
       const more = a.detail;
       const tooltip = [a.program?.name, a.spaceName, more, a.location, a.status === "unknown" ? "Status unavailable" : null].filter(Boolean).join(" · ");
-      if (collapsed) {
-        return h_flex()
-          .id(a.rowId)
-          .h(26)
-          .mx(6)
-          .px(2)
-          .rounded(6)
-          .flex_none()
-          .items_center()
-          .gap(4)
-          .when(a.focused, (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
-          .on_click(a.activate)
-          .when(Boolean(tooltip), el => el.tooltip(tooltip))
-          .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(a.focused ? t.foreground : t.muted)
-            .child(navigationIndices.has(a.address) ? String(navigationIndices.get(a.address)) : pic))
-          .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
-      }
       const when = a.since;
       const muted = (a.status === "idle" || a.status === "unknown") && !a.focused;
       const isPinned = a.pinned;
@@ -704,9 +686,8 @@ export default class Agents extends View {
       rows.push(row(a));
       if (!this.folded.has(a.address)) rows.push(...a.children.map(child => this.subRow(t, child, shown, byPriority)));
     };
-    if (collapsed) {
-      ordered.forEach(add);
-    } else {
+    // The rail shows agents on their spaces' avatars (the spaces mod), not as rows here.
+    if (!collapsed) {
       for (const group of groups) {
         const folded = this.folded.has(group.id);
         group.selected = group.members.some(a => a.focused);
@@ -726,8 +707,8 @@ export default class Agents extends View {
       .size_full()
       .min_h(0)
       .bg(t.chrome)
-      .border_t(1)
-      .border_color(t.border)
+      // On the rail this block is only the unfold button: no line across it.
+      .when(!collapsed, (el) => el.border_t(1).border_color(t.border))
       .text_size(13)
       .when(!collapsed, (el) =>
         el.child(
