@@ -542,7 +542,7 @@ export default class Spaces extends View {
     const selected = clients.find(c => c.address === current)?.session;
     const rows = this.ordered();
     const workspaces = spaces();
-    const client = clients.length ? pickClient(clients, focus, workspaces, this.lastTmuxClient) : null;
+    const client = pickClient(clients, focus, workspaces, this.lastTmuxClient);
     const hostSpace = this.tmux.sessions.length ? this.resolveTmuxHost(workspaces, client) : null;
     const host = rows.find(({ w }) => w.id === hostSpace?.id);
     const { rows: tmuxRows, activeAt: tmuxAt } = this.tmuxGroup(t, collapsed, selected, Boolean(host));
