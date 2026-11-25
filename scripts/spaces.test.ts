@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attachArgv, findClients, pickClient, newSessionArgs } from "../defaults/mods/spaces/tmux.js";
+import { attachArgv, findClients, pickClient, newSessionArgs, openArgs } from "../defaults/mods/spaces/tmux.js";
 const source = (await readFile(new URL("../defaults/mods/spaces/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "").replace("export default class Spaces", "class Spaces").replace(/^export /gm, "");
 
@@ -30,7 +30,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
     if (method === "id") ids.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "checking", "findClients", "pickClient", "focused", "terminals", "home", "attachArgv", "notify", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "checking", "findClients", "pickClient", "focused", "terminals", "home", "attachArgv", "notify", "openArgs", `${source}; return Spaces;`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -47,7 +47,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
     },
     ...Array(4).fill(() => element), () => null, () => availability, execGit, () => env.window, watch,
     ScrollHandle, theme, () => env.layout, () => {}, () => env.checking, findClients, pickClient, () => env.focus, () => env.terminals,
-    () => "/fixture/home", attachArgv, (error: unknown) => { throw Error(JSON.stringify(error)); },
+    () => "/fixture/home", attachArgv, (error: unknown) => { throw Error(JSON.stringify(error)); }, openArgs,
   );
   const view = new Spaces();
   view.reconnecting = {};
@@ -718,4 +718,38 @@ test("in the narrow rail, the tmux host keeps its attention dot over the tmux ch
     expect(h.labels.includes("●")).toBe(dot);
     expect(h.ids.includes("space-tmux-toggle-s1")).toBe(!dot);
   }
+});
+
+test("opening a tmux agent's pane is one tmux call that selects the pane and switches the client", () => {
+  const session = { id: "$2", socket: "/tmp/tmux-501/default" };
+  const client = { name: "/dev/ttys004", session: "$1" };
+  expect(openArgs(session, { window: "@3", pane: "%7" }, client)).toEqual([
+    "-S", "/tmp/tmux-501/default", "select-window", "-t", "$2:@3", ";", "select-pane", "-t", "$2:@3.%7",
+    ";", "switch-client", "-E", "-c", "/dev/ttys004", "-t", "$2",
+  ]);
+  expect(openArgs(session, null, { ...client, session: "$2" })).toBeNull();
+});
+
+test("a known tmux session opens from the last snapshot, focusing the pane before tmux answers", async () => {
+  const host = { id: "work", name: "Work", folder: "/", active: true, tabs: [{ id: "mux", panes: 1 }] };
+  const order: string[] = [];
+  const execs: string[][] = [];
+  const h = harness([], new Map(), [host] as Space[], async (_binary: string, args: string[]) => {
+    order.push("exec"); execs.push(args); return { code: 0, stdout: "", stderr: "" };
+  });
+  Object.assign(h.view, { git: {}, checked: {}, unsure: new Set(), pending: new Set(), watching: new Map(), folded: new Set(), machines: [] });
+  const session = { id: "$2", name: "api", server: "900", socket: "/tmp/tmux/default" };
+  h.view.tmux = { sessions: [session], clients: [{ session: "$1", pid: 10, name: "/dev/ttys004" }] };
+  h.env.terminals = [{ address: "t1", pid: 10 }];
+  h.env.panes = [{ terminal: "t1", tab: "mux", pane: "p1" }];
+  h.env.focus = { space: "work", terminal: "t1" };
+  h.env.run = (name) => order.push(name);
+  let snapshots = 0;
+  h.view.findTmuxBinary = async () => (h.view.tmuxBinary = "/usr/bin/tmux");
+  h.view.tmuxSnapshot = async () => { snapshots++; order.push("snapshot"); return h.view.tmux; };
+  h.view.useTmux(h.cx, { id: "$2", server: "900" }, { window: "@3", pane: "%7" });
+  await Promise.all(h.tasks);
+  expect(order).toEqual(["pane.focus", "exec", "snapshot"]);
+  expect(snapshots).toBe(1);
+  expect(execs).toEqual([openArgs(session, { window: "@3", pane: "%7" }, { name: "/dev/ttys004", session: "$1" })]);
 });

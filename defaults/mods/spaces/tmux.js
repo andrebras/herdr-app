@@ -49,8 +49,15 @@ export function attachArgv(binary, session) {
   return ["/bin/sh", "-c", 'unset TMUX; exec "$@"', MARKER, binary, "-S", session.socket, "attach-session", "-E", "-t", session.id];
 }
 
-export function switchArgs(session, client) {
-  return ["-S", session.socket, "switch-client", "-E", "-c", client.name, "-t", session.id];
+// One tmux call that shows the target pane and moves the client to its session.
+export function openArgs(session, target, client) {
+  const steps = [];
+  if (target) {
+    const window = session.id + ":" + target.window;
+    steps.push(["select-window", "-t", window], ["select-pane", "-t", window + "." + target.pane]);
+  }
+  if (client.session !== session.id) steps.push(["switch-client", "-E", "-c", client.name, "-t", session.id]);
+  return steps.length ? ["-S", session.socket, ...steps.flatMap((step, i) => (i ? [";", ...step] : step))] : null;
 }
 
 export function parseAgentTarget(command) {

@@ -6,7 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, checking, terminals, focused, home, notify, nextCommand } from "herdr";
-import { INSPECT_ARGS, parseSnapshot, findClients, pickClient, attachArgv, switchArgs, newSessionArgs, parseAgentTarget, selectPaneArgs } from "./tmux.js";
+import { INSPECT_ARGS, parseSnapshot, findClients, pickClient, attachArgv, openArgs, newSessionArgs, parseAgentTarget, selectPaneArgs } from "./tmux.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -191,14 +191,17 @@ export default class Spaces extends View {
     cx.spawn(async cx => {
       try {
         if (!await this.findTmuxBinary()) throw new Error("tmux is not available on this computer.");
-        this.tmux = await this.tmuxSnapshot();
+        const wanted = session;
+        const known = () => this.tmux.sessions.find(s => s.id === wanted.id && s.server === wanted.server && (!wanted.socket || s.socket === wanted.socket));
+        // The last snapshot (at most a second old) can open a known session; anything else looks again.
+        if (!wanted || !known()) this.tmux = await this.tmuxSnapshot();
         const clients = findClients(this.tmux.clients, terminals(), panes());
         const at = focused();
         const workspaces = spaces();
         const client = pickClient(clients, at, workspaces, this.lastTmuxClient);
         const host = this.resolveTmuxHost(workspaces, client);
         if (session) {
-          session = this.tmux.sessions.find(s => s.id === session.id && s.server === session.server && (!session.socket || s.socket === session.socket));
+          session = known();
           if (!session) throw new Error("That tmux session has ended.");
         } else {
           const current = workspaces.find(s => s.active);
@@ -215,18 +218,20 @@ export default class Spaces extends View {
           [session] = parseSnapshot(created.stdout).sessions;
           if (!session) throw new Error("tmux did not return the new session.");
         }
-        if (target) {
-          const picked = await exec(this.tmuxBinary, selectPaneArgs(session, target), { timeout: 2000 });
-          if (picked.code !== 0) throw new Error(picked.stderr.trim() || "That tmux pane is no longer available.");
-        }
         if (client) {
-          if (client.session !== session.id) {
-            const changed = await exec(this.tmuxBinary, switchArgs(session, client), { timeout: 2000 });
-            if (changed.code !== 0) throw new Error(changed.stderr.trim() || "Could not switch tmux sessions.");
-          }
           this.lastTmuxClient = client.address;
+          // Focus first, so the pane shows at once; tmux catches up a moment later.
           run("pane.focus", { pane: client.pane });
+          const args = openArgs(session, target, client);
+          if (args) {
+            const opened = await exec(this.tmuxBinary, args, { timeout: 2000 });
+            if (opened.code !== 0) throw new Error(opened.stderr.trim() || "That tmux pane is no longer available.");
+          }
         } else {
+          if (target) {
+            const picked = await exec(this.tmuxBinary, selectPaneArgs(session, target), { timeout: 2000 });
+            if (picked.code !== 0) throw new Error(picked.stderr.trim() || "That tmux pane is no longer available.");
+          }
           this.tmuxStartingUntil = Date.now() + 5000;
           const start = { name: "tmux", folder: home(), argv: attachArgv(this.tmuxBinary, session) };
           if (host) run("tab.new", { ...start, space: host.id, focus: true });
