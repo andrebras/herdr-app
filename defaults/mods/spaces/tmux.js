@@ -70,5 +70,5 @@ export function newSessionArgs(folder, sessions) {
   const names = new Set(sessions.map(s => s.name));
   let name = base;
   for (let n = 2; names.has(name); n++) name = `${base}-${n}`;
-  return ["-u", "-L", "default", "new-session", "-d", "-P", "-F", SESSION_FORMAT, "-c", folder, "-s", name];
+  return ["-u", "-L", "default", "new-session", "-d", "-P", "-F", SESSION_FORMAT, "-c", folder.replaceAll("#", "##"), "-s", name];
 }

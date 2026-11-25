@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attachArgv, findClients, pickClient } from "../defaults/mods/spaces/tmux.js";
+import { attachArgv, findClients, pickClient, newSessionArgs } from "../defaults/mods/spaces/tmux.js";
 const source = (await readFile(new URL("../defaults/mods/spaces/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "").replace("export default class Spaces", "class Spaces").replace(/^export /gm, "");
 
@@ -704,4 +704,9 @@ test("tmux is polled only on Linux and macOS", () => {
     h.view.init({}, { timer: { every() {} }, notify() {}, spawn() {} });
     expect(refreshed > 0).toBe(polled);
   }
+});
+
+test("a new session's folder is passed to tmux literally, never as a format", () => {
+  const args = newSessionArgs("/work/#(touch pwned)/#Sprint", []);
+  expect(args[args.indexOf("-c") + 1]).toBe("/work/##(touch pwned)/##Sprint");
 });
