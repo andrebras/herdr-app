@@ -243,7 +243,7 @@ export default class Agents extends View {
         .child(h_flex().size(22).flex_none().rounded(11).items_center().justify_center()
           .bg(spaceTint(t, a.space) ?? t.raised ?? t.hover)
           .when(!a.focused && a.status === "idle", (el) => el.opacity(0.7))
-          .child(pic))
+          .when(Boolean(pic), (el) => el.child(pic)))
         .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
           .border(2).border_color(t.chrome).bg(t[dot])))
         // agent.select's index, as the rail always showed it.
