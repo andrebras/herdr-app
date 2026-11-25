@@ -490,7 +490,7 @@ export default class Agents extends View {
       .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
       .when(a.focused, (el) => el.child(div().absolute().left(0).top(9).w(3).h(16).rounded(2).bg(t.foreground)))
       .child(h_flex().relative().size(28).flex_none().items_center().justify_center()
-        .when(a.status === "working", (el) => el.child(svg("mods/spaces/ring.svg").absolute().top(0).left(0).size(28).text_color(t.working).spin(900)))
+        .when(a.status === "working", (el) => el.child(svg("mods/agents/ring.svg").absolute().top(0).left(0).size(28).text_color(t.working).spin(900)))
         .child(h_flex().size(22).flex_none().rounded(11).items_center().justify_center()
           .bg(tint ?? t.raised ?? t.hover)
           .when(!known, (el) => el.opacity(0.45))

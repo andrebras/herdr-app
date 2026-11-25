@@ -78,18 +78,11 @@ function fillOf(t, w) {
 
 const SAYS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
 
-// What a space's avatar on the rail shows: a spinning ring while one of its agents
-// works, a dot when one needs you (else when one is done), and a tooltip naming the
-// space and its agents ("api · Claude working, Codex needs you").
-export function railState(w, list) {
-  const mine = list.filter((a) => a.space === w.id);
-  const has = (s) => w.status === s || mine.some((a) => a.status === s);
-  const who = mine.map((a) => `${a.program?.name || "Agent"} ${SAYS[a.status] ?? a.status}`);
-  return {
-    working: has("working"),
-    dot: has("blocked") ? "blocked" : has("done") ? "done" : null,
-    tip: [w.name, who.join(", ")].filter(Boolean).join(" \u00b7 "),
-  };
+// A space's tooltip on the rail: its name and its agents ("api · Claude working, Codex
+// needs you"). Their status itself shows on their own rail cells (the agents mod).
+export function railTip(w, list) {
+  const who = list.filter((a) => a.space === w.id).map((a) => `${a.program?.name || "Agent"} ${SAYS[a.status] ?? a.status}`);
+  return [w.name, who.join(", ")].filter(Boolean).join(" \u00b7 ");
 }
 
 export default class Spaces extends View {
@@ -752,13 +745,10 @@ export default class Spaces extends View {
       );
   }
 
-  // One rail cell: the space's avatar, its ctrl-number in a corner (space.select:N),
-  // its agents as a ring (working) and a dot (needs you, done), the rest in a tooltip.
-  // The tmux host space's chevron takes the dot's corner unless an agent needs you.
+  // One rail cell: the space's avatar, its ctrl-number in a corner (space.select:N), and
+  // its agents named in a tooltip. Their status shows once, on their own cells (agents).
   compact({ w, i }, t, list, ownsTmux = false) {
     const on = w.active;
-    const state = railState(w, list);
-    const dot = state.dot && (!ownsTmux || state.dot === "blocked") ? state.dot : null;
     return railCell(h_flex()
       .id(`space-${w.id}`)
       .relative()
@@ -769,20 +759,17 @@ export default class Spaces extends View {
       .items_center()
       .when(on, (el) => el.bg(t.selected))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
-      .tooltip(state.tip)
+      .tooltip(railTip(w, list))
       .on_click(() => run("space.select", { id: w.id }))
       .on_mouse_down("right", () => this.menu(w))
       .when(on, (el) => el.child(div().absolute().left(0).top(9).w(3).h(16).rounded(2).bg(t.foreground)))
       .child(h_flex().relative().size(28).flex_none().items_center().justify_center()
-        .when(state.working, (el) => el.child(svg("mods/spaces/ring.svg").absolute().top(0).left(0).size(28).text_color(t.working).spin(900)))
         .child(h_flex().size(22).flex_none().rounded(6).bg(fillOf(t, w)).items_center().justify_center()
           .when(!on, (el) => el.opacity(0.78))
           .text_size(11.5).font_bold().text_color("#ffffff").child(spaceAvatar(w.name)))
-        .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
-          .border(2).border_color(t.chrome).bg(t[dot])))
         .when(i < 9, (el) => el.child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
           .text_size(8.5).font_bold().text_color(on ? t.foreground : t.dim).child(String(i + 1)))))
-      .when(ownsTmux && !dot, (el) => el.child(div().absolute().right(-5).child(this.tmuxChevron(t, w.id)))));
+      .when(ownsTmux, (el) => el.child(div().absolute().right(-5).child(this.tmuxChevron(t, w.id)))));
   }
 
   render() {

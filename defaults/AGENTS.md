@@ -479,11 +479,10 @@ Sidebar on the right: swap the two children of `root`. No sidebar: set
 Narrower than 160px, the sidebar mods draw a compact rail; folding resizes
 `sidebar` to 44 (76 on macOS, room for the traffic lights). On the rail,
 `spaces` draws one avatar per space (its color and initial, its
-`space.select` number in a corner) and its agents on it: a spinning ring while
-one works, a dot when one needs you or is done, names in the tooltip; `agents`
-draws one cell per agent: its program's icon on its space's color, the same ring
-and dots, its agent number in a corner, details in the tooltip (detected agents
-dimmed). On macOS,
+`space.select` number in a corner, its agents named in the tooltip); `agents`
+draws one cell per agent: its program's icon on its space's color, a spinning
+ring while it works, a dot when it needs you or is done, its agent number in a
+corner, details in the tooltip (detected agents dimmed). On macOS,
 the tabs also leave room for the window buttons when the sidebar is narrower.
 
 ### Layouts and mods other people made

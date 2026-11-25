@@ -713,12 +713,12 @@ test("a new session's folder is passed to tmux literally, never as a format", ()
   expect(args[args.indexOf("-c") + 1]).toBe("/work/##(touch pwned)/##Sprint");
 });
 
-test("in the narrow rail, the tmux host's chevron gives way only to an agent that needs you", () => {
-  for (const [status, chevron] of [["blocked", false], ["done", true], ["working", true], ["idle", true]] as const) {
+test("in the narrow rail, the tmux host keeps its chevron whatever its agents do", () => {
+  for (const status of ["blocked", "done", "working", "idle"]) {
     const h = harness();
     const list = [{ space: "s1", status, program: { name: "Claude" } }];
     h.view.compact({ w: { id: "s1", name: "tmux", active: false }, i: 0 }, {}, list, true);
-    expect(h.ids.includes("space-tmux-toggle-s1")).toBe(chevron);
+    expect(h.ids.includes("space-tmux-toggle-s1")).toBe(true);
   }
 });
 
@@ -756,22 +756,15 @@ test("a known tmux session opens from the last snapshot, focusing the pane befor
   expect(execs).toEqual([openArgs(session, { window: "@3", pane: "%7" }, { name: "/dev/ttys004", session: "$1" })]);
 });
 
-test("a rail avatar shows its space's agents: a ring while one works, a dot for needs you, else done", () => {
-  const railState = new Function("View", `${source}; return railState;`)(class {});
+test("a rail avatar's tooltip names the space and its agents", () => {
+  const railTip = new Function("View", `${source}; return railTip;`)(class {});
   const claude = { name: "Claude" }, codex = { name: "Codex" };
-  const w = { id: "s1", name: "tallyport", status: null };
-  const agent = (status: string, program: unknown = claude, space = "s1") => ({ space, status, program });
-  expect(railState(w, [])).toEqual({ working: false, dot: null, tip: "tallyport" });
-  expect(railState(w, [agent("working")])).toEqual({ working: true, dot: null, tip: "tallyport · Claude working" });
-  expect(railState(w, [agent("done"), agent("working", codex)])).toEqual({ working: true, dot: "done", tip: "tallyport · Claude done, Codex working" });
-  // Needs you wins the dot over done; a working agent still spins beside it.
-  expect(railState(w, [agent("done"), agent("blocked", codex), agent("working")])).toMatchObject({ working: true, dot: "blocked" });
-  expect(railState(w, [agent("blocked")]).tip).toBe("tallyport · Claude needs you");
-  expect(railState(w, [agent("idle")])).toEqual({ working: false, dot: null, tip: "tallyport · Claude idle" });
-  // Another space's agents stay off this avatar.
-  expect(railState(w, [agent("blocked", claude, "s2")])).toEqual({ working: false, dot: null, tip: "tallyport" });
-  // The space's own status counts too (an agent the list doesn't carry).
-  expect(railState({ ...w, status: "blocked" }, []).dot).toBe("blocked");
+  const agent = (status: string, program = claude, space = "s1") => ({ space, status, program });
+  const w = { id: "s1", name: "tallyport" };
+  expect(railTip(w, [])).toBe("tallyport");
+  expect(railTip(w, [agent("working")])).toBe("tallyport \u00b7 Claude working");
+  expect(railTip(w, [agent("done"), agent("blocked", codex)])).toBe("tallyport \u00b7 Claude done, Codex needs you");
+  expect(railTip(w, [agent("blocked", claude, "s2")])).toBe("tallyport");
 });
 
 test("the rail draws one avatar per space with its ctrl-number hint and a tooltip; the wide list draws none of that", () => {
