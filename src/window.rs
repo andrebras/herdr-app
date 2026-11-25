@@ -3685,6 +3685,10 @@ impl AppWindow {
                 if !self.chrome.select(s, ch) {
                     return self.fail(format!("no stack {s:?} with a child {ch:?}"));
                 }
+                // One step from a palette entry or a key: the stack and whatever hides it show too.
+                if a.get("show").and_then(Value::as_bool) == Some(true) {
+                    self.chrome.reveal(s);
+                }
             }
             "mod.open" => {
                 let name = Self::arg(a, "name").unwrap_or_default();

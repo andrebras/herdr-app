@@ -672,6 +672,15 @@ impl Node {
         false
     }
 
+    /// Shows `id` and every node above it that was hidden.
+    pub fn reveal(&mut self, id: &str) {
+        for at in self.path_to(id).unwrap_or_default() {
+            if let Some(n) = self.find_mut(&at) {
+                n.hidden = false;
+            }
+        }
+    }
+
     /// The visible child of a stack.
     pub fn active_child(&self) -> Option<&Node> {
         match &self.kind {
@@ -954,6 +963,18 @@ mod tests {
         assert_eq!(n.visible_blocks().iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["b"]);
         n.find_mut("b").unwrap().hidden = true;
         assert_eq!(n.active_child().map(|c| c.id.as_str()), Some("a"));
+    }
+
+    #[test]
+    fn revealing_shows_the_node_and_what_hid_it() {
+        let stack = Node::new("s", Kind::Stack { children: vec![term("a")], active: None, header: None });
+        let mut panel = Node::container("panel", Axis::Column, vec![stack]);
+        panel.hidden = true;
+        let mut root = Node::container("r", Axis::Row, vec![term("main"), panel]);
+        root.find_mut("main").unwrap().hidden = true;
+        root.reveal("s");
+        assert!(!root.find("panel").unwrap().hidden && !root.find("s").unwrap().hidden);
+        assert!(root.find("main").unwrap().hidden, "siblings stay as they were");
     }
 
     #[test]
