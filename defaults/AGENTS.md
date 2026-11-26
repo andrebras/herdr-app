@@ -950,7 +950,7 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
 
 - `"panel"` in `mod.json` shows the mod in Herdr's own layouts' side panel,
   beside Files and Changes, with a tab-bar button that shows and hides it as
-  theirs do: `"panel": { "title": "Tempo", "icon": "icon.svg" }` (`icon`: an SVG
+  theirs do: `"panel": { "title": "Notes", "icon": "icon.svg" }` (`icon`: an SVG
   file in the mod's folder). Its block is `panel-<mod>` in the `panel-body`
   stack, so `layout.toggle {id: "panel", stack: "panel-body", child: "panel-<mod>"}`
   shows and hides it as its button does, and `layout.select {stack: "panel-body",

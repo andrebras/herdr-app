@@ -203,15 +203,15 @@ const click = (view: InstanceType<typeof Tabs>, id: string) => {
   (button!.calls.on_click[0] as () => void)();
 };
 
-// Herdr's side panel with the tempo mod added to it, shown or hidden, on `active`.
+// Herdr's side panel with the notes mod added to it, shown or hidden, on `active`.
 const sidePanel = (hidden: boolean, active: string) => ({
   id: "root",
-  children: [{ id: "panel", hidden, children: [{ id: "panel-body", active, children: [{ id: "files" }, { id: "changes" }, { id: "panel-tempo" }] }] }],
+  children: [{ id: "panel", hidden, children: [{ id: "panel-body", active, children: [{ id: "files" }, { id: "changes" }, { id: "panel-notes" }] }] }],
 });
 
 test("a mod's panel gets a button once Herdr adds it; others and malformed ones don't", async () => {
   state.files = {
-    "/home/mods/tempo/mod.json": JSON.stringify({ panel: { title: "Tempo", icon: "icon.svg" } }),
+    "/home/mods/notes/mod.json": JSON.stringify({ panel: { title: "Notes", icon: "icon.svg" } }),
     "/home/mods/later/mod.json": JSON.stringify({ panel: { title: "Later" } }),
     "/home/mods/plain/mod.json": JSON.stringify({ place: "right" }),
     "/home/mods/bad/mod.json": JSON.stringify({ panel: { title: "  ", icon: "../x.svg" } }),
@@ -220,34 +220,34 @@ test("a mod's panel gets a button once Herdr adds it; others and malformed ones 
   const view = await panels();
   expect(view.modPanels).toEqual([
     { id: "panel-later", mod: "later", title: "Later", icon: null },
-    { id: "panel-tempo", mod: "tempo", title: "Tempo", icon: "mods/tempo/icon.svg" },
+    { id: "panel-notes", mod: "notes", title: "Notes", icon: "mods/notes/icon.svg" },
   ]);
   state.layout = sidePanel(true, "files");
   const bar = view.render() as Element;
-  expect(find(bar, "panel-panel-tempo")).not.toBeNull();
+  expect(find(bar, "panel-panel-notes")).not.toBeNull();
   expect(find(bar, "panel-panel-later")).toBeNull();
 });
 
 test("a mod's panel button toggles the side panel on its panel, as Files does", async () => {
-  state.files = { "/home/mods/tempo/mod.json": JSON.stringify({ panel: { title: "Tempo" } }) };
+  state.files = { "/home/mods/notes/mod.json": JSON.stringify({ panel: { title: "Notes" } }) };
   const view = await panels();
   state.layout = sidePanel(true, "files");
-  click(view, "panel-panel-tempo");
-  expect(runs).toEqual([["layout.toggle", { id: "panel", stack: "panel-body", child: "panel-tempo" }]]);
+  click(view, "panel-panel-notes");
+  expect(runs).toEqual([["layout.toggle", { id: "panel", stack: "panel-body", child: "panel-notes" }]]);
 });
 
 test("a mod's count shows on its panel button while the panel isn't showing it", async () => {
-  state.files = { "/home/mods/tempo/mod.json": JSON.stringify({ panel: { title: "Tempo" } }) };
-  state.shared = { "tempo.badge": 3 };
+  state.files = { "/home/mods/notes/mod.json": JSON.stringify({ panel: { title: "Notes" } }) };
+  state.shared = { "notes.badge": 3 };
   const view = await panels();
-  const label = () => JSON.stringify(find(view.render() as Element, "panel-panel-tempo"), (k, v) => (k === "calls" ? undefined : v));
-  state.layout = sidePanel(true, "panel-tempo");
+  const label = () => JSON.stringify(find(view.render() as Element, "panel-panel-notes"), (k, v) => (k === "calls" ? undefined : v));
+  state.layout = sidePanel(true, "panel-notes");
   expect(label()).toContain('"3"');
   state.layout = sidePanel(false, "files");
   expect(label()).toContain('"3"');
-  state.layout = sidePanel(false, "panel-tempo");
+  state.layout = sidePanel(false, "panel-notes");
   expect(label()).not.toContain('"3"');
-  state.shared = { "tempo.badge": 0 };
+  state.shared = { "notes.badge": 0 };
   state.layout = sidePanel(true, "files");
   expect(label()).not.toContain('"0"');
 });
