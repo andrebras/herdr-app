@@ -438,11 +438,13 @@ Replace a personal layout tree; shipped layouts accept only click/look fields (n
 
 ## `layout.toggle`
 
-Hide or show a layout node.
+Hide or show a layout node (with stack and child: show it on that child, or hide it when it already shows it).
 
 | Argument | Required |
 |---|---|
 | `id` | yes |
+| `stack` | no |
+| `child` | no |
 
 ## `layout.show`
 
@@ -472,12 +474,13 @@ Size a layout node.
 
 ## `layout.select`
 
-Show one child of a stack.
+Show one child of a stack (show: true also shows the stack where hidden).
 
 | Argument | Required |
 |---|---|
 | `stack` | yes |
 | `child` | yes |
+| `show` | no |
 
 ## `layout.reset`
 
