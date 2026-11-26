@@ -3,30 +3,36 @@ import { readFile } from "node:fs/promises";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { attachArgv, findClients, pickClient, newSessionArgs, openArgs } from "../defaults/mods/spaces/tmux.js";
 const source = (await readFile(new URL("../defaults/mods/spaces/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "").replace("export default class Spaces", "class Spaces").replace(/^export /gm, "");
 
 type Space = { id: string; name: string; folder: string; machine?: string | null; active?: boolean };
-function harness(replies: unknown[] = [], storage = new Map<string, string>(), snapshot: Space[] = [], execGit?: (...args: any[]) => Promise<unknown>, watch?: (repo: string) => Promise<string[]>) {
+function harness(replies: unknown[] = [], storage = new Map<string, string>(), snapshot: Space[] = [], execGit?: (...args: any[]) => Promise<unknown>, watch?: (repo: string) => Promise<string[]>, agentList: unknown[] = []) {
   const calls: string[][] = [];
   const tasks: Promise<unknown>[] = [];
   const availability = [{ name: null as string | null, layout: "ready" }];
   const moves: { id: string; index: number }[] = [];
   const handlers: Record<string, (...args: any[]) => void> = {};
-  const env = { layout: null as unknown };
+  const env = { layout: null as unknown, focus: null as unknown, terminals: [] as unknown[], panes: [] as unknown[],
+    run: null as ((name: string, args: unknown) => void) | null, window: { active: true } as unknown, checking: true };
   // The list's scroll position: the requests the view makes are what the sidebar would scroll by.
   const ScrollHandle = { new: () => ({ calls: [] as number[], scroll_to_item(index: number) { this.calls.push(index); } }) };
   const theme = () => new Proxy({}, { get: () => "#000000" });
   const tracked: unknown[] = [];
   const labels: string[] = [];
+  const ids: string[] = [];
+  const tooltips: string[] = [];
   const element: any = new Proxy({}, { get: (_, method) => (...args: any[]) => {
     if (String(method).startsWith("on_")) handlers[String(method)] = args.at(-1);
     if (method === "track_scroll") tracked.push(args[0]);
     if (method === "when" && args[0]) args[1](element);
     if (method === "child" && typeof args[0] === "string") labels.push(args[0]);
+    if (method === "id") ids.push(args[0]);
+    if (method === "tooltip") tooltips.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "checking", "findClients", "pickClient", "focused", "terminals", "home", "attachArgv", "notify", "openArgs", "agents", `${source}; return Spaces;`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -35,20 +41,23 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
       return reply ?? { code: 0, stdout: "{}", stderr: "" };
     },
     { setItem(key: string, value: string) { storage.set(key, value); }, getItem(key: string) { return storage.get(key) ?? null; } },
-    () => snapshot, () => [],
+    () => snapshot, () => env.panes,
     (name: string, args: { id: string; index: number }) => {
+      if (env.run) return env.run(name, args);
       expect(name).toBe("space.move");
       moves.push(args);
     },
-    ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
-    ScrollHandle, theme, () => env.layout, () => {},
+    ...Array(4).fill(() => element), () => null, () => availability, execGit, () => env.window, watch,
+    ScrollHandle, theme, () => env.layout, () => {}, () => env.checking, findClients, pickClient, () => env.focus, () => env.terminals,
+    () => "/fixture/home", attachArgv, (error: unknown) => { throw Error(JSON.stringify(error)); }, openArgs, () => agentList,
   );
   const view = new Spaces();
   view.reconnecting = {};
+  view.tmux = { sessions: [], clients: [] };
   view.folded = new Set(["cloud"]);
   view.refreshMachines = () => {};
   const cx = { timer: { every() {} }, notify() {}, spawn(fn: (cx: unknown) => Promise<unknown>) { tasks.push(fn(cx)); } };
-  return { view, calls, tasks, cx, storage, moves, handlers, snapshot, availability, env, tracked, labels };
+  return { view, calls, tasks, cx, storage, moves, handlers, snapshot, availability, env, tracked, labels, ids, tooltips };
 }
 
 test("git grouping reads refs for normal, detached, unborn and bare worktrees", async () => {
@@ -592,4 +601,193 @@ test("space rows keep the full label and omit matching git details after an emoj
   expect(rowLabels("🐼 Herdr-App")).toEqual(["🐼", "🐼 Herdr-App", "topic", "↑2"]);
   expect(rowLabels("✌🏻 topic")).toEqual(["✌🏻", "✌🏻 topic", "herdr-app", "↑2"]);
   expect(rowLabels("🐼 topic", "└─")).toEqual(["🐼 topic", "↑2"]);
+});
+
+test("tmux sessions share a collapsible heading and the active index follows the visible row", () => {
+  const { view, labels, handlers, cx, storage } = harness();
+  view.tmux.sessions = [{ id: "$1", name: "dataforge" }, { id: "$2", name: "revolution" }];
+  const expanded = view.tmuxGroup({}, false, "$2");
+  expect(expanded.rows).toHaveLength(3);
+  expect(expanded.activeAt).toBe(2);
+  expect(labels).toEqual(["tmux", "dataforge", "revolution"]);
+  view.tmux.sessions = [{ id: "$1", name: "dataforge" }];
+  view.tmuxFolded = true;
+  labels.length = 0;
+  const collapsed = view.tmuxGroup({}, false, "$1");
+  expect(collapsed.rows).toHaveLength(1);
+  expect(collapsed.activeAt).toBe(0);
+  expect(labels).toEqual(["tmux"]);
+  handlers.on_click(null, cx);
+  expect(storage.get("tmux.folded")).toBe("false");
+});
+
+test("the existing Space owns the tmux tree even when its regular shell tab is selected", () => {
+  const host = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "mux", panes: 1 }, { id: "shell", panes: 1 }] };
+  const other = { id: "other", name: "Project", folder: "/project", active: false, tabs: [] };
+  const h = scrollHarness([host, other]);
+  h.view.tmux.sessions = [{ id: "$1", name: "dataforge" }, { id: "$2", name: "revolution" }];
+  h.view.tmux.clients = [{ session: "$2", pid: 10 }];
+  h.env.terminals = [{ address: "t1", pid: 10 }];
+  h.env.panes = [{ terminal: "t1", tab: "mux", pane: "p1" }];
+  h.env.focus = { space: "work", terminal: "t2" };
+  expect(h.view.grouped({}, false)).toHaveLength(4);
+  expect(h.ids).not.toContain("tmux-group");
+  expect(h.ids.filter(id => id === "space-work")).toHaveLength(1);
+  expect(h.ids).toContain("space-tmux-toggle-work");
+  expect(h.view.activeAt).toBe(0);
+  h.env.focus = { space: "work", terminal: "t1" };
+  h.view.grouped({}, false);
+  expect(h.view.activeAt).toBe(2);
+  h.view.tmuxFolded = true;
+  expect(h.view.grouped({}, false)).toHaveLength(2);
+  expect(h.view.activeAt).toBe(0);
+});
+
+test("closing the tmux tab keeps sessions under the same Space and reopens a tab there", async () => {
+  const host = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "mux", panes: 1 }, { id: "shell", panes: 1 }] };
+  const h = scrollHarness([host]);
+  const session = { id: "$1", name: "dataforge", server: "900", socket: "/tmp/tmux/default" };
+  h.view.tmux.sessions = [session];
+  h.view.tmux.clients = [{ session: "$1", pid: 10 }];
+  h.env.terminals = [{ address: "t1", pid: 10 }];
+  h.env.panes = [{ terminal: "t1", tab: "mux", pane: "p1" }];
+  h.env.focus = { space: "work", terminal: "t1" };
+  h.view.grouped({}, false);
+  expect(h.storage.get("tmux.host")).toBe("work");
+
+  host.name = "Work";
+  host.tabs.shift();
+  h.view.tmux.clients = [];
+  h.env.terminals = [];
+  h.env.panes = [];
+  h.env.focus = { space: "work", terminal: "shell" };
+  h.ids.length = 0;
+  expect(h.view.grouped({}, false)).toHaveLength(2);
+  expect(h.ids).toContain("space-tmux-toggle-work");
+  expect(h.ids).not.toContain("tmux-group");
+  expect(h.view.activeAt).toBe(0);
+
+  const actions: unknown[][] = [];
+  h.env.run = (name, args) => actions.push([name, args]);
+  h.view.findTmuxBinary = async () => (h.view.tmuxBinary = "/usr/bin/tmux");
+  h.view.tmuxSnapshot = async () => ({ sessions: [session], clients: [] });
+  h.view.useTmux(h.cx, session);
+  await Promise.all(h.tasks);
+  expect(actions).toEqual([["tab.new", {
+    name: "tmux", folder: "/fixture/home", argv: attachArgv("/usr/bin/tmux", session), space: "work", focus: true,
+  }]]);
+});
+
+test("a tmux server that stops answering drops its sessions", async () => {
+  const h = scrollHarness([]);
+  h.view.tmux.sessions = [{ id: "$1", name: "dataforge" }];
+  h.view.findTmuxBinary = async () => (h.view.tmuxBinary = "/usr/bin/tmux");
+  h.view.tmuxSnapshot = async () => { throw new Error("server exited unexpectedly"); };
+  h.view.refreshTmux(h.cx);
+  await Promise.all(h.tasks);
+  expect(h.view.tmux).toEqual({ sessions: [], clients: [] });
+});
+
+test("a Space the person named tmux does not become the tmux host", () => {
+  const own = { id: "work", name: "tmux", folder: "/", active: true, tabs: [{ id: "shell", panes: 1 }] };
+  const h = scrollHarness([own]);
+  h.view.tmux.sessions = [{ id: "$1", name: "dataforge" }];
+  h.view.grouped({}, false);
+  expect(h.storage.has("tmux.host")).toBe(false);
+  expect(h.ids).toContain("tmux-group");
+});
+
+test("tmux is polled only on Linux and macOS", () => {
+  for (const [platform, polled] of [["windows", false], ["linux", true], ["macos", true]] as const) {
+    const h = harness();
+    Object.assign(h.env, { checking: false, window: { visible: true, platform } });
+    let refreshed = 0;
+    h.view.refreshTmux = () => { refreshed++; };
+    h.view.init({}, { timer: { every() {} }, notify() {}, spawn() {} });
+    expect(refreshed > 0).toBe(polled);
+  }
+});
+
+test("a new session's folder is passed to tmux literally, never as a format", () => {
+  const args = newSessionArgs("/work/#(touch pwned)/#Sprint", []);
+  expect(args[args.indexOf("-c") + 1]).toBe("/work/##(touch pwned)/##Sprint");
+});
+
+test("in the narrow rail, the tmux host keeps its chevron whatever its agents do", () => {
+  for (const status of ["blocked", "done", "working", "idle"]) {
+    const h = harness();
+    const list = [{ space: "s1", status, program: { name: "Claude" } }];
+    h.view.compact({ w: { id: "s1", name: "tmux", active: false }, i: 0 }, {}, list, true);
+    expect(h.ids.includes("space-tmux-toggle-s1")).toBe(true);
+  }
+});
+
+test("opening a tmux agent's pane is one tmux call that selects the pane and switches the client", () => {
+  const session = { id: "$2", socket: "/tmp/tmux-501/default" };
+  const client = { name: "/dev/ttys004", session: "$1" };
+  expect(openArgs(session, { window: "@3", pane: "%7" }, client)).toEqual([
+    "-S", "/tmp/tmux-501/default", "select-window", "-t", "$2:@3", ";", "select-pane", "-t", "$2:@3.%7",
+    ";", "switch-client", "-E", "-c", "/dev/ttys004", "-t", "$2",
+  ]);
+  expect(openArgs(session, null, { ...client, session: "$2" })).toBeNull();
+});
+
+test("a known tmux session opens from the last snapshot, focusing the pane before tmux answers", async () => {
+  const host = { id: "work", name: "Work", folder: "/", active: true, tabs: [{ id: "mux", panes: 1 }] };
+  const order: string[] = [];
+  const execs: string[][] = [];
+  const h = harness([], new Map(), [host] as Space[], async (_binary: string, args: string[]) => {
+    order.push("exec"); execs.push(args); return { code: 0, stdout: "", stderr: "" };
+  });
+  Object.assign(h.view, { git: {}, checked: {}, unsure: new Set(), pending: new Set(), watching: new Map(), folded: new Set(), machines: [] });
+  const session = { id: "$2", name: "api", server: "900", socket: "/tmp/tmux/default" };
+  h.view.tmux = { sessions: [session], clients: [{ session: "$1", pid: 10, name: "/dev/ttys004" }] };
+  h.env.terminals = [{ address: "t1", pid: 10 }];
+  h.env.panes = [{ terminal: "t1", tab: "mux", pane: "p1" }];
+  h.env.focus = { space: "work", terminal: "t1" };
+  h.env.run = (name) => order.push(name);
+  let snapshots = 0;
+  h.view.findTmuxBinary = async () => (h.view.tmuxBinary = "/usr/bin/tmux");
+  h.view.tmuxSnapshot = async () => { snapshots++; order.push("snapshot"); return h.view.tmux; };
+  h.view.useTmux(h.cx, { id: "$2", server: "900" }, { window: "@3", pane: "%7" });
+  await Promise.all(h.tasks);
+  expect(order).toEqual(["pane.focus", "exec", "snapshot"]);
+  expect(snapshots).toBe(1);
+  expect(execs).toEqual([openArgs(session, { window: "@3", pane: "%7" }, { name: "/dev/ttys004", session: "$1" })]);
+});
+
+test("a rail avatar's tooltip names the space and its agents", () => {
+  const railTip = new Function("View", `${source}; return railTip;`)(class {});
+  const claude = { name: "Claude" }, codex = { name: "Codex" };
+  const agent = (status: string, program = claude, space = "s1") => ({ space, status, program });
+  const w = { id: "s1", name: "tallyport" };
+  expect(railTip(w, [])).toBe("tallyport");
+  expect(railTip(w, [agent("working")])).toBe("tallyport \u00b7 Claude working");
+  expect(railTip(w, [agent("done"), agent("blocked", codex)])).toBe("tallyport \u00b7 Claude done, Codex needs you");
+  expect(railTip(w, [agent("blocked", claude, "s2")])).toBe("tallyport");
+});
+
+test("the rail draws one avatar per space with its ctrl-number hint and a tooltip; the wide list draws none of that", () => {
+  const ids = Array.from({ length: 10 }, (_, i) => `s${i + 1}`);
+  const list = spaceList(ids, "s2").map((s, i) => ({ ...s, name: i === 0 ? "tallyport" : s.name }));
+  const agentList = [{ space: "s1", status: "working", program: { name: "Claude" } }];
+  const h = harness([], new Map(), list, undefined, undefined, agentList);
+  Object.assign(h.view, { git: {}, checked: {}, unsure: new Set(), pending: new Set(), watching: new Map(), folded: new Set(), machines: [] });
+  h.view.shown = new Set(ids);
+  h.view.born = {};
+  h.view.scroll = { scroll_to_item() {} };
+  h.env.layout = { id: "sidebar", size: { px: 76 } };
+  h.view.render();
+  expect(h.tooltips).toEqual(["tallyport · Claude working", ...ids.slice(1)]);
+  expect(h.labels).toContain("T");
+  // ctrl-1 to ctrl-9 select the first nine spaces: the tenth has no hint.
+  for (let n = 1; n <= 9; n++) expect(h.labels).toContain(String(n));
+  expect(h.labels).not.toContain("10");
+  h.labels.length = 0;
+  h.tooltips.length = 0;
+  h.env.layout = { id: "sidebar", size: { px: 268 } };
+  h.view.render();
+  expect(h.tooltips).toEqual([]);
+  expect(h.labels).toContain("tallyport");
+  expect(h.labels).not.toContain("1");
 });

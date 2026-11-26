@@ -51,7 +51,10 @@ herdr-app do agent.select --index 3
 ```
 
 `agent.select` uses the same navigation order as `agent.next` (1 = first).
-In `keys.json`, `agent.select:3` selects the third agent in that order.
+`herdr-app do` uses the order agent mods publish with `setAgentOrder`. Keys,
+clicks and mods follow the visible Agents list when it is shown, which can
+include agents Herdr only detected. Then `agent.select:3` in `keys.json` can
+pick a different agent than `do agent.select --index 3`.
 
 For a remote space:
 

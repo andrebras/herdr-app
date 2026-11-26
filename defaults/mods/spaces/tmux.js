@@ -1,0 +1,81 @@
+const MARKER = "herdr-tmux-client";
+const SESSION_FORMAT = "session\t#{session_id}\t#{pid}\t#{socket_path}\t#{session_name}";
+const CLIENT_FORMAT = "client\t#{client_pid}\t#{session_id}\t#{client_name}";
+
+export const INSPECT_ARGS = [
+  "-u", "-L", "default", "list-sessions", "-F", SESSION_FORMAT,
+  ";", "list-clients", "-F", CLIENT_FORMAT,
+];
+
+export function parseSnapshot(stdout) {
+  const sessions = [];
+  const clients = [];
+  for (const line of stdout.split("\n")) {
+    const [kind, first, second, ...rest] = line.split("\t");
+    if (kind === "session" && /^\$\d+$/.test(first) && /^\d+$/.test(second) && rest[0]?.startsWith("/") && rest.length > 1) {
+      const [socket, ...name] = rest;
+      sessions.push({ id: first, server: second, socket, name: name.join("\t") });
+    } else if (kind === "client" && /^\d+$/.test(first) && /^\$\d+$/.test(second) && rest.length) {
+      clients.push({ pid: Number(first), session: second, name: rest.join("\t") });
+    }
+  }
+  return { sessions, clients };
+}
+
+export function findClients(clients, terminals, panes) {
+  const byPid = new Map(clients.map(client => [client.pid, client]));
+  const local = new Map(terminals.filter(t => t.address && !t.address.includes("/")).map(t => [t.address, t]));
+  return panes.flatMap(pane => {
+    const terminal = local.get(pane.terminal);
+    const client = byPid.get(terminal?.foreground?.pid) ?? byPid.get(terminal?.pid);
+    if (!client) return [];
+    return [{ ...client, pane: pane.pane, address: terminal.address, tab: pane.tab, dedicated: terminal.argv?.includes(MARKER) }];
+  });
+}
+
+export function pickClient(clients, focus, spaces, lastAddress) {
+  const current = spaces.find(space => space.id === focus?.space || (!focus?.space && space.active));
+  const tabs = new Set(current?.tabs?.map(tab => tab.id));
+  return clients.find(client => client.address === (focus?.shown ?? focus?.terminal))
+    ?? clients.find(client => tabs.has(client.tab) && client.address === lastAddress)
+    ?? clients.find(client => tabs.has(client.tab))
+    ?? clients.find(client => client.address === lastAddress)
+    ?? clients.find(client => client.dedicated)
+    ?? clients[0];
+}
+
+export function attachArgv(binary, session) {
+  // The core's shell may itself have been started from tmux.
+  return ["/bin/sh", "-c", 'unset TMUX; exec "$@"', MARKER, binary, "-S", session.socket, "attach-session", "-E", "-t", session.id];
+}
+
+// One tmux call that shows the target pane and moves the client to its session.
+export function openArgs(session, target, client) {
+  const steps = [];
+  if (target) {
+    const window = session.id + ":" + target.window;
+    steps.push(["select-window", "-t", window], ["select-pane", "-t", window + "." + target.pane]);
+  }
+  if (client.session !== session.id) steps.push(["switch-client", "-E", "-c", client.name, "-t", session.id]);
+  return steps.length ? ["-S", session.socket, ...steps.flatMap((step, i) => (i ? [";", ...step] : step))] : null;
+}
+
+export function parseAgentTarget(command) {
+  const match = /^open-tmux-agent-(\d+)-(\d+)-(\d+)-(\d+)$/.exec(command);
+  if (!match) return null;
+  const [, server, session, window, pane] = match;
+  return { session: { server, id: "$" + session }, window: "@" + window, pane: "%" + pane };
+}
+
+export function selectPaneArgs(session, target) {
+  const window = session.id + ":" + target.window;
+  return ["-S", session.socket, "select-window", "-t", window, ";", "select-pane", "-t", window + "." + target.pane];
+}
+
+export function newSessionArgs(folder, sessions) {
+  const base = folder.split("/").filter(Boolean).pop()?.replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/^-+|-+$/g, "") || "shell";
+  const names = new Set(sessions.map(s => s.name));
+  let name = base;
+  for (let n = 2; names.has(name); n++) name = `${base}-${n}`;
+  return ["-u", "-L", "default", "new-session", "-d", "-P", "-F", SESSION_FORMAT, "-c", folder.replaceAll("#", "##"), "-s", name];
+}

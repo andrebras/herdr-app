@@ -7,7 +7,7 @@ async function harness(mod: string, values: Record<string, string>) {
   const name = { agents: "Agents", spaces: "Spaces", tabs: "Tabs" }[mod]!;
   const data = new Map(Object.entries(values));
   const globals = {
-    View: class {}, props: () => ({}), spaces: () => [], checking: () => true, ScrollHandle: { new: () => ({}) },
+    View: class {}, props: () => ({}), spaces: () => [], shared: () => null, checking: () => true, ScrollHandle: { new: () => ({}) },
     localStorage: { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value), removeItem: (key: string) => data.delete(key) },
   };
   const Mod = new Function(...Object.keys(globals), `${source}; return ${name};`)(...Object.values(globals));
@@ -36,6 +36,10 @@ for (const raw of ["{{{not json", "null", "42", '"old shape"', "{}"]) {
     view.migratePins([]);
     expect(view.pendingPins).toEqual([]);
     expect(data.has("pins")).toBe(false);
+  });
+  test(`agents recover invalid tmux pins: ${raw}`, async () => {
+    const { view } = await harness("agents", { "tmux.pins": raw });
+    expect([...view.tmuxPins]).toEqual([]);
   });
   test(`spaces recover invalid folded machines: ${raw}`, async () => {
     const { view } = await harness("spaces", { "machines.folded": raw });

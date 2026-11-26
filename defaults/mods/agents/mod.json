@@ -1,1 +1,8 @@
-{ "place": "none", "title": "Agents" }
+{
+  "place": "none",
+  "title": "Agents",
+  "palette": [
+    { "title": "Next listed agent", "command": "agents.next-agent" },
+    { "title": "Previous listed agent", "command": "agents.previous-agent" }
+  ]
+}
