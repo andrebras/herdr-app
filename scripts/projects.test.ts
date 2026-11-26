@@ -78,10 +78,10 @@ async function enter(view: any) {
 
 test("lists repos under ~/Lab by default, without repos nested in another or hidden ones", async () => {
   const view = await open(
-    ["/u/Lab/onzehq", "/u/Lab/tempo", "/u/Lab/herdr-app", "/u/Lab/herdr-app/vendor/ghostty", "/u/Lab/clients/acme/web", "/u/Lab/.cache/x", "/u/Lab/site/node_modules/pkg", "/u/Lab/a/b/c/too-deep"],
+    ["/u/Lab/shop", "/u/Lab/blog", "/u/Lab/herdr-app", "/u/Lab/herdr-app/vendor/ghostty", "/u/Lab/clients/acme/web", "/u/Lab/.cache/x", "/u/Lab/site/node_modules/pkg", "/u/Lab/a/b/c/too-deep"],
     [], null, ["/u/Lab/notes/readme"],
   );
-  expect(view.rows().map((r: any) => r.name)).toEqual(["web", "herdr-app", "onzehq", "tempo"]);
+  expect(view.rows().map((r: any) => r.name)).toEqual(["blog", "web", "herdr-app", "shop"]);
   expect(state.reads).not.toContain("/u/Lab/herdr-app");
   expect(state.reads).not.toContain("/u/Lab/a/b/c");
 });
@@ -93,55 +93,55 @@ test("projects.json sets the roots, the depth and extra folders", async () => {
 
 test("open spaces come first, and a repo with a space shows once, as that space", async () => {
   const spaces = [
-    { id: "s1", name: "tempo", folder: "/u/Lab/tempo", tabs: [] },
+    { id: "s1", name: "blog", folder: "/u/Lab/blog", tabs: [] },
     { id: "s3", name: "notes", folder: "/u", tabs: [{ id: "t3", active: true }] },
     { id: "s2", name: "far", folder: "/srv", machine: "box", tabs: [] },
   ];
-  const view = await open(["/u/Lab/onzehq", "/u/Lab/tempo"], spaces);
+  const view = await open(["/u/Lab/shop", "/u/Lab/blog"], spaces);
   state.panes = [{ tab: "t3", cwd: "/u/notes", focused: true }];
   expect(view.rows().map((r: any) => [r.kind, r.name, r.path])).toEqual([
-    ["space", "tempo", "/u/Lab/tempo"],
+    ["space", "blog", "/u/Lab/blog"],
     ["space", "notes", "/u/notes"],
-    ["project", "onzehq", "/u/Lab/onzehq"],
+    ["project", "shop", "/u/Lab/shop"],
   ]);
 });
 
 test("typing filters, best match first; Enter makes a space named after the folder", async () => {
-  const view = await open(["/u/Lab/zonehq-old", "/u/Lab/onzehq", "/u/Lab/other"]);
-  type(view, "onzehq");
-  expect(view.rows().map((r: any) => r.name)).toEqual(["onzehq"]);
-  type(view, "onz");
-  expect(view.rows()[0].name).toBe("onzehq");
+  const view = await open(["/u/Lab/washhouse-old", "/u/Lab/shop", "/u/Lab/other"]);
+  type(view, "shop");
+  expect(view.rows().map((r: any) => r.name)).toEqual(["shop"]);
+  type(view, "sho");
+  expect(view.rows()[0].name).toBe("shop");
   await enter(view);
-  expect(commands).toEqual([["space.new", { folder: "/u/Lab/onzehq", name: "onzehq" }]]);
+  expect(commands).toEqual([["space.new", { folder: "/u/Lab/shop", name: "shop" }]]);
 });
 
 test("a repo whose space has a terminal there goes to that space", async () => {
   const spaces = [{ id: "s1", name: "work", folder: "/u", tabs: [{ id: "t1" }] }];
-  const view = await open(["/u/Lab/onzehq"], spaces);
-  state.panes = [{ tab: "t1", cwd: "/u/Lab/onzehq/src" }];
-  view.repos = ["/u/Lab/onzehq", "/u/Lab/new"];
+  const view = await open(["/u/Lab/shop"], spaces);
+  state.panes = [{ tab: "t1", cwd: "/u/Lab/shop/src" }];
+  view.repos = ["/u/Lab/shop", "/u/Lab/new"];
   type(view, "new");
   await enter(view);
   expect(commands).toEqual([["space.new", { folder: "/u/Lab/new", name: "new" }]]);
   commands.length = 0;
-  view.repos = ["/u/Lab/onzehq"];
+  view.repos = ["/u/Lab/shop"];
   state.panes = [];
   state.spaces = [{ id: "s1", name: "work", folder: "/u", tabs: [{ id: "t1" }] }];
-  state.panes = [{ tab: "t1", cwd: "/u/Lab/onzehq/src" }];
-  await view.go({ kind: "project", name: "onzehq", path: "/u/Lab/onzehq" }, cx);
+  state.panes = [{ tab: "t1", cwd: "/u/Lab/shop/src" }];
+  await view.go({ kind: "project", name: "shop", path: "/u/Lab/shop" }, cx);
   expect(commands).toEqual([["space.select", { id: "s1" }]]);
 });
 
 test("a typed path comes first, then what's inside it; a missing folder stays put", async () => {
-  const view = await open(["/u/Lab/onzehq", "/u/Lab/tempo"], [], null, ["/u/code/foo/file"]);
+  const view = await open(["/u/Lab/shop", "/u/Lab/blog"], [], null, ["/u/code/foo/file"]);
   type(view, "nothing-like-it");
   expect(view.rows()).toEqual([]);
   await enter(view);
   expect(commands).toEqual([]);
   type(view, "~/Lab");
-  expect(view.rows().map((r: any) => [r.kind, r.name])).toEqual([["folder", "Lab"], ["project", "onzehq"], ["project", "tempo"]]);
-  type(view, "~/Lab/onzehq/");
+  expect(view.rows().map((r: any) => [r.kind, r.name])).toEqual([["folder", "Lab"], ["project", "blog"], ["project", "shop"]]);
+  type(view, "~/Lab/shop/");
   expect(view.rows().map((r: any) => r.kind)).toEqual(["project"]);
   type(view, "~/code/missing");
   await enter(view);

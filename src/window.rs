@@ -8373,17 +8373,17 @@ export default class Probe extends View { render() { return div().child("probe")
     fn panel_mods_join_the_side_panel_and_leave_with_their_folder() {
         let mut main = super::default_layout("main");
         let kids = |n: &super::Node| n.find("panel-body").unwrap().children().iter().map(|c| c.id.clone()).collect::<Vec<_>>();
-        assert!(super::add_panels(&mut main, &["tempo".into()]));
-        assert_eq!(kids(&main), ["files", "changes", "panel-tempo"]);
-        assert!(matches!(main.find("panel-tempo").unwrap().content(), Some(super::Content::Mod { name, .. }) if name == "tempo"));
-        assert!(!super::add_panels(&mut main, &["tempo".into()]), "adding again changes nothing");
-        assert!(main.select("panel-body", "panel-tempo"));
+        assert!(super::add_panels(&mut main, &["notes".into()]));
+        assert_eq!(kids(&main), ["files", "changes", "panel-notes"]);
+        assert!(matches!(main.find("panel-notes").unwrap().content(), Some(super::Content::Mod { name, .. }) if name == "notes"));
+        assert!(!super::add_panels(&mut main, &["notes".into()]), "adding again changes nothing");
+        assert!(main.select("panel-body", "panel-notes"));
         assert!(super::add_panels(&mut main, &[]));
         assert_eq!(kids(&main), ["files", "changes"]);
         // The stack falls back to its first panel when the shown one's mod is gone.
         assert_eq!(main.find("panel-body").unwrap().active_child().unwrap().id, "files");
         let mut terminals = super::default_layout("terminals");
-        assert!(!super::add_panels(&mut terminals, &["tempo".into()]), "no side panel, nothing to add");
+        assert!(!super::add_panels(&mut terminals, &["notes".into()]), "no side panel, nothing to add");
     }
 
     #[test]
