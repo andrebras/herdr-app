@@ -942,7 +942,8 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   stack, so `layout.toggle {id: "panel", stack: "panel-body", child: "panel-<mod>"}`
   shows and hides it as its button does, and `layout.select {stack: "panel-body",
   child: "panel-<mod>", show: true}` only shows it (palette entries can use either). Give such a mod `"place": "none"`.
-  Personal layouts place it themselves.
+  Personal layouts place it themselves. A count the mod publishes with
+  `setShared("<mod>.badge", n)` shows on its button while the panel isn't showing it.
 
 - The first time Herdr sees a folder, it docks one copy per `mod.json` into
   the shown layout (`"none"`: only where a layout or another mod puts it).

@@ -29,7 +29,7 @@ async function modPanels() {
       const p = JSON.parse(await readFile(`${dir}/${mod}/mod.json`, "utf8")).panel;
       if (!p || typeof p !== "object" || typeof p.title !== "string" || !p.title.trim()) continue;
       const icon = typeof p.icon === "string" && /^[\w.-]+\.svg$/.test(p.icon) ? `mods/${mod}/${p.icon}` : null;
-      found.push({ id: `panel-${mod}`, title: p.title.trim(), icon });
+      found.push({ id: `panel-${mod}`, mod, title: p.title.trim(), icon });
     } catch {}
   }
   return found;
@@ -171,12 +171,15 @@ export default class Tabs extends View {
     // Mods' panels show while Herdr has added them to the panel.
     const mine = this.modPanels.filter((p) => body?.children?.some((c) => c.id === p.id));
     this.syncPanel(space, panel, body, [...enabled, ...mine.map((p) => p.id)]);
-    const panelButton = (id, label, icon) => {
+    // badge: a count the panel's mod publishes (shared "<mod>.badge"), shown while the
+    // panel isn't showing it, so what waits there is visible from the tab bar.
+    const panelButton = (id, label, icon, badge = 0) => {
       const on = panel && !panel.hidden && body?.active === id;
       return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
         .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
-        .on_click(() => run("layout.toggle", { id: "panel", stack: "panel-body", child: id })).when(Boolean(icon), el => el.child(svg(icon).size(14))).child(label);
+        .on_click(() => run("layout.toggle", { id: "panel", stack: "panel-body", child: id })).when(Boolean(icon), el => el.child(svg(icon).size(14))).child(label)
+        .when(!on && Number.isInteger(badge) && badge > 0, el => el.child(div().px(5).rounded(7).bg(t.blocked).text_size(10.5).text_color(t.solid_foreground).child(String(badge))));
     };
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
@@ -187,7 +190,7 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
-      .children(mine.map((p) => panelButton(p.id, p.title, p.icon)))
+      .children(mine.map((p) => panelButton(p.id, p.title, p.icon, shared(`${p.mod}.badge`))))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
