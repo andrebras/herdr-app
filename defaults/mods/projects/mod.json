@@ -1,8 +1,0 @@
-{
-  "place": "none",
-  "title": "Projects",
-  "overlay": { "kind": "popup", "at": "top", "offset": 40, "width": 640, "height": 0.8 },
-  "palette": [
-    { "title": "Open a project", "command": "mod.open", "args": { "name": "projects" }, "words": "folder repo git space sessionizer" }
-  ]
-}

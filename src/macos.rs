@@ -119,7 +119,6 @@ pub(crate) fn menus(layouts: &[String], shown: Option<&str>) -> Vec<Menu> {
             command("Zoom", "window.maximize"),
             MenuItem::separator(),
             command("Go to Tab…", "mod.open:picker"),
-            command("Open Project…", "mod.open:projects"),
             command("Next Tab", "tab.next"),
             command("Previous Tab", "tab.prev"),
             command("Next Space", "space.next"),
