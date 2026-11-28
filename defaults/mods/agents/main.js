@@ -2,13 +2,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, knownAgents, openOverlay, closeOverlay, props, window, layout, checking, exec, nextCommand } from "herdr";
-import { PS_ARGS, TMUX_PANE_ARGS, parseProcesses, paneCommands, parseTmuxPanes, parseTmuxClients, focusedTmux, detectedAgents, selectedDetectedAgent } from "./discovery.js";
-import { macTerminalDevice, revealTerminalArgs } from "./external.js";
-
-function layoutHasMod(node, mod) {
-  return node && !node.hidden && (node.content?.mod === mod || (node.children ?? []).some(child => layoutHasMod(child, mod)));
-}
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -48,17 +42,13 @@ function leadPanes(all) {
   return leads;
 }
 
-function liveTitle(l) {
+function title(tab, l) {
   const prog = l?.program?.name;
   const live = clean(l?.title);
   // clean() would strip a path's leading ~ or /: test the title with only its status glyph gone.
   const path = /^[~/]|^[A-Za-z]:\\/.test((l?.title ?? "").replace(/^[^\p{L}\p{N}~/]+/u, ""));
   const telling = live && live !== (l?.terminal ?? l?.address) && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
-  return telling ? live : null;
-}
-
-function title(tab, l) {
-  return ((tab.name === l?.program?.name || !tab.named) && liveTitle(l)) || tab.name;
+  return (tab.name === prog || !tab.named) && telling ? live : tab.name;
 }
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
@@ -74,7 +64,7 @@ const SORTS = [
   { id: "grouped", label: "Grouped by space", icon: "layers" },
 ];
 const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
-const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle", 0: "Detected" };
+const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
 
 function duration(ms) {
@@ -85,9 +75,9 @@ function duration(ms) {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
-// A Herdr space's colour, as the spaces mod draws its avatar (shared "space.colors",
-// "ansi6" until one is stored), faded so an icon reads on it; null for a group that
-// isn't a Herdr space (a tmux session, a detected agent outside Herdr).
+// A space's colour, as the spaces mod draws its avatar (shared "space.colors",
+// "ansi6" until one is stored), faded so an icon reads on it; null for an agent
+// whose space isn't listed.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 function spaceTint(t, space, colors, spaceIds) {
   if (!spaceIds.has(space)) return null;
@@ -104,7 +94,7 @@ function icon(p, size, color) {
 
 export default class Agents extends View {
   init(_props, cx) {
-    if (props()?.sortMenu || props()?.agentDetails) return;
+    if (props()?.sortMenu) return;
     this.folded = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
     try { this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}"); } catch { this.changed = {}; }
@@ -113,244 +103,8 @@ export default class Agents extends View {
     if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
-    try {
-      const pins = JSON.parse(localStorage.getItem("tmux.pins") ?? "[]");
-      this.tmuxPins = new Set(Array.isArray(pins) ? pins.filter(pin => typeof pin === "string") : []);
-    } catch {
-      this.tmuxPins = new Set();
-    }
     this.scroll = ScrollHandle.new();
-    this.processes = new Map();
-    this.tmuxPanes = new Map();
-    this.tmuxClients = new Map();
-    this.nextProcessScan = 0;
-    this.paneCommands = "";
-    this.tmuxRetry = 0;
-    this.nextDiscovery = 0;
-    // The app's program table names and draws detected agents, like tracked ones.
-    // The New menu keeps the last answer in shared storage, so names show at once.
-    this.catalog = new Map((shared("new-menu.agents")?.[""] ?? []).map(p => [p.key, p]));
-    this.catalogLoaded = false;
     cx.timer.every(30000, (cx) => cx.notify());
-    if (!checking()) {
-      const poll = cx => {
-        // A hold focus never confirmed (a session that ended) is redrawn when it runs out.
-        if (this.navigationPending && Date.now() >= this.navigationPending.until) cx.notify();
-        const win = window();
-        // tmux and ps are Unix tools; Windows has neither, so nothing is polled there.
-        if (!win?.visible || !["linux", "macos"].includes(win.platform) || Date.now() < this.nextDiscovery) return;
-        this.nextDiscovery = Date.now() + 1500;
-        this.discover(cx);
-      };
-      poll(cx);
-      // Ticks are cheap; discovery runs every 1.5 s, or sooner after a click or key.
-      cx.timer.every(250, poll);
-      this.loadCatalog(cx);
-      // A failed check is not cached, so try again until one answers.
-      cx.timer.every(30000, cx => this.loadCatalog(cx));
-      cx.spawn(async cx => {
-        for (;;) {
-          this.navigate(await nextCommand());
-          cx.notify();
-        }
-      });
-    }
-  }
-
-  navigate(command) {
-    const list = this.navigation ?? [];
-    if (!list.length) return;
-    const index = list.findIndex(a => a.address === this.navigationCurrent);
-    const select = /^select-agent-([1-9]\d*)$/.exec(command);
-    let target;
-    if (command === "next-agent") target = list[(index + 1) % list.length];
-    else if (command === "previous-agent") target = list[index < 0 ? list.length - 1 : (index + list.length - 1) % list.length];
-    else if (select) target = list[Number(select[1]) - 1];
-    if (!target) return;
-    this.hold(target.address);
-    target.navigate();
-  }
-
-  // Focus reaches the list late for tmux rows: show the target as selected at
-  // once, hold it until focus confirms it, and look again soon.
-  hold(address) {
-    this.navigationCurrent = address;
-    this.navigationPending = { address, until: Date.now() + 3000 };
-    this.nextDiscovery = Math.min(this.nextDiscovery ?? 0, Date.now() + 300);
-  }
-
-  followFocus(address, now = Date.now()) {
-    const pending = this.navigationPending;
-    if (pending && (address === pending.address || now >= pending.until)) this.navigationPending = null;
-    this.navigationCurrent = this.navigationPending?.address ?? address;
-  }
-
-  discover(cx) {
-    if (this.discovering) return;
-    this.discovering = true;
-    cx.spawn(async cx => {
-      try {
-        const now = Date.now();
-        if (now >= this.tmuxRetry) {
-          let result = null;
-          try { result = await exec("tmux", TMUX_PANE_ARGS, { timeout: 2000 }); } catch {}
-          if (result?.code === 0 || /no server running|error connecting to .*\(No such file or directory\)/.test(result?.stderr ?? "")) {
-            // No server means no panes; anything else (no tmux, a hung server)
-            // keeps the last panes and waits before asking again.
-            const output = result.code === 0 ? result.stdout : "";
-            this.tmuxPanes = parseTmuxPanes(output);
-            this.tmuxClients = parseTmuxClients(output);
-            this.paneCommands = paneCommands(output);
-          } else {
-            this.tmuxRetry = Date.now() + 15000;
-          }
-        }
-        // Reading every process costs far more than asking tmux, so it runs when
-        // a pane's or a terminal's foreground program changes, and every 30 s
-        // for agents in other terminal apps.
-        const signature = JSON.stringify([this.paneCommands, terminals().map(t => t.foreground?.pid ?? t.pid)]);
-        if (now >= this.nextProcessScan || signature !== this.processSignature) {
-          this.processSignature = signature;
-          let ps = null;
-          try { ps = await exec("ps", PS_ARGS, { timeout: 2500 }); } catch {}
-          if (ps?.code === 0) this.processes = parseProcesses(ps.stdout);
-          // A failed read is tried again soon, so a starting agent isn't missed for 30 s.
-          this.nextProcessScan = now + (ps?.code === 0 ? 30000 : 4500);
-        }
-        const { active, found } = this.detection();
-        const key = JSON.stringify([found, active]);
-        if (key !== this.discoveryKey) {
-          this.discoveryKey = key;
-          cx.notify();
-        }
-      } finally {
-        this.discovering = false;
-      }
-    });
-  }
-
-  // The tmux pane in front and the agents found outside Herdr; discover() and
-  // render() both use it, so the change check matches what the list shows.
-  detection(all = terminals(), allPanes = panes(), tracked = agents(), current = focused()) {
-    const active = focusedTmux(this.tmuxClients, all, current?.shown ?? current?.terminal, this.processes);
-    return { active, found: detectedAgents(this.processes, this.tmuxPanes, all, allPanes, tracked, active) };
-  }
-
-  focusDetected(agent) {
-    const { tmux, pane } = agent;
-    const location = tmux?.label ?? "This computer";
-    if (tmux && layoutHasMod(layout(), "spaces")) {
-      const suffix = [tmux.server, tmux.session.slice(1), tmux.window.slice(1), tmux.pane.slice(1)].join("-");
-      run(`spaces.open-tmux-agent-${suffix}`);
-    } else if (!tmux && pane) {
-      run("pane.focus", { pane });
-    } else {
-      openOverlay({ mod: "agents", kind: "dialog", width: 365, height: 220,
-        props: { agentDetails: { name: this.programFor(agent.name).name, location, pid: agent.pid, tty: agent.tty, tmux: Boolean(tmux) } } });
-    }
-  }
-
-  loadCatalog(cx) {
-    if (this.catalogLoaded || this.catalogLoading) return;
-    this.catalogLoading = true;
-    cx.spawn(async cx => {
-      try {
-        this.catalog = new Map((await knownAgents()).map(p => [p.key, p]));
-        this.catalogLoaded = true;
-        cx.notify();
-      } catch {} finally {
-        this.catalogLoading = false;
-      }
-    });
-  }
-
-  programFor(key) {
-    return this.catalog.get(key) ?? { key, name: key, icon: "icons/agent.svg", tint: true };
-  }
-
-  pinTmux(key, pinned) {
-    if (pinned) this.tmuxPins.add(key);
-    else this.tmuxPins.delete(key);
-    localStorage.setItem("tmux.pins", JSON.stringify([...this.tmuxPins]));
-  }
-
-  detectedModel(agent, selected, contexts = new Map(), tmuxCanFocus = true) {
-    const tmux = agent.tmux;
-    const program = this.programFor(agent.name);
-    const tmuxTitle = tmux?.titles?.map(title => liveTitle({ title, program })).find(Boolean);
-    const pinKey = tmux?.start ? JSON.stringify([tmux.server, tmux.start, tmux.pane, agent.name]) : null;
-    const context = contexts.get(agent.pane);
-    const address = `detected-agent-${agent.pid}`;
-    // Only a row Herdr can focus waits for focus; one that opens details doesn't.
-    const focusable = tmux ? tmuxCanFocus : Boolean(agent.pane);
-    const activate = (_e, cx) => {
-      if (focusable) this.hold(address);
-      this.focusDetected(agent);
-      cx?.notify();
-    };
-    return {
-      address, rowId: address, reported: false, focused: agent.pid === selected,
-      group: tmux ? `tmux-${tmux.server}-${tmux.session}` : context?.space ?? "local-external",
-      groupName: tmux?.label ?? context?.name ?? "This computer",
-      spaceName: tmux?.label ?? context?.name ?? program.name,
-      title: tmuxTitle || program.name,
-      detail: tmux ? tmuxTitle : context ? program.name : agent.tty,
-      location: tmux?.position,
-      program,
-      status: "unknown", rank: 0, since: null, children: [],
-      pinned: tmux ? this.tmuxPins.has(pinKey) : Boolean(agent.pinned),
-      pin: pinKey ? pinned => this.pinTmux(pinKey, pinned)
-        : !tmux && agent.terminal ? pinned => run("terminal.pin", { terminal: agent.terminal, pinned }) : null,
-      activate, navigate: focusable ? activate : null,
-    };
-  }
-
-  reveal(agent, app, cx) {
-    if (this.revealing) return;
-    const args = revealTerminalArgs(app, agent.tty);
-    if (!args) return;
-    this.revealing = true;
-    this.revealMessage = "Looking for the matching terminal…";
-    cx.notify();
-    cx.spawn(async cx => {
-      try {
-        const ps = await exec("/bin/ps", ["-p", String(agent.pid), "-o", "tty="], { timeout: 2000 });
-        if (ps.code !== 0 || macTerminalDevice(ps.stdout.trim()) !== macTerminalDevice(agent.tty)) {
-          this.revealMessage = "The agent has exited or changed terminals.";
-        } else {
-          const result = await exec("/usr/bin/osascript", args, { timeout: 30000 });
-          if (result.code === 0 && result.stdout.trim() === "revealed") {
-            closeOverlay(props().overlay);
-            return;
-          }
-          this.revealMessage = result.code === 0
-            ? "No matching tab in that app."
-            : "macOS could not switch to that terminal. Check Automation permissions if prompted.";
-        }
-      } catch {
-        this.revealMessage = "Could not open the terminal.";
-      } finally {
-        this.revealing = false;
-        cx.notify();
-      }
-    });
-  }
-
-  agentDetails(t, agent) {
-    const button = (id, text, action) => div().id(id).px(9).py(6).rounded(6).bg(t.raised)
-      .cursor_pointer().hover(el => el.bg(t.hover)).on_click(action).child(text);
-    // Revealing a tab drives Terminal and iTerm2 through osascript, which only macOS has.
-    const reveal = !agent.tmux && window()?.platform === "macos" && Boolean(macTerminalDevice(agent.tty));
-    const help = reveal ? "Open the app that owns this terminal." : "Herdr has no pane to open for this agent.";
-    return v_flex().size_full().p(16).gap(9).text_color(t.foreground)
-      .child(div().text_size(15).font_semibold().child(agent.name))
-      .child(div().text_size(12).text_color(t.muted).child(`${agent.location} · PID ${agent.pid} · ${agent.tty}`))
-      .child(div().text_size(12).text_color(t.dim).child(this.revealMessage || help))
-      .child(div().flex_1())
-      .child(h_flex().gap(8)
-        .when(reveal, el => el.child(button("reveal-terminal", "Open in Terminal", (_e, cx) => this.reveal(agent, "terminal", cx)))
-          .child(button("reveal-iterm", "Open in iTerm2", (_e, cx) => this.reveal(agent, "iterm", cx))))
-        .child(button("agent-details-close", "Close", () => closeOverlay(props().overlay))));
   }
 
   // Stamps agents whose state changed. Done and idle count as one: looking at a
@@ -468,16 +222,14 @@ export default class Agents extends View {
 
   // One agent on the rail: its program's icon on a tile in its space's colour (so it
   // matches that space's avatar above), a spinning ring while it works, a dot when it
-  // needs you or is done, its agent number in a corner, the rest in a tooltip. Agents
-  // Herdr only detected (outside its terminals) are dimmed, idle ones a little.
-  // `tints` is read once per render: { colors, spaceIds }.
+  // needs you or is done, its agent number in a corner, the rest in a tooltip. Idle
+  // agents are dimmed a little. `tints` is read once per render: { colors, spaceIds }.
   railCell(t, a, pic, tooltip, number, tints) {
-    const tint = spaceTint(t, a.group, tints.colors, tints.spaceIds);
-    const known = a.status !== "unknown";
+    const tint = spaceTint(t, a.space, tints.colors, tints.spaceIds);
     const dot = a.status === "blocked" || a.status === "done" ? a.status : null;
     // Centred and as wide as a space's rail cell (spaces' RAIL_CELL), so they line up.
     return h_flex().flex_none().justify_center().child(h_flex()
-      .id(a.rowId)
+      .id(`ag-${a.address}`)
       .relative()
       .w(32)
       .h(34)
@@ -487,27 +239,24 @@ export default class Agents extends View {
       .items_center()
       .when(a.focused, (el) => el.bg(t.selected))
       .hover((s) => s.bg(t.hover))
-      .on_click(a.activate)
+      .on_click(() => run("pane.focus", { pane: a.pane }))
       .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
       .when(a.focused, (el) => el.child(div().absolute().left(0).top(9).w(3).h(16).rounded(2).bg(t.foreground)))
       .child(h_flex().relative().size(28).flex_none().items_center().justify_center()
         .when(a.status === "working", (el) => el.child(svg("mods/agents/ring.svg").absolute().top(0).left(0).size(28).text_color(t.working).spin(900)))
         .child(h_flex().size(22).flex_none().rounded(11).items_center().justify_center()
           .bg(tint ?? t.raised ?? t.hover)
-          .when(!known, (el) => el.opacity(0.45))
-          .when(known && !a.focused && a.status === "idle", (el) => el.opacity(0.7))
+          .when(!a.focused && a.status === "idle", (el) => el.opacity(0.7))
           .child(pic))
         .when(Boolean(dot), (el) => el.child(div().absolute().top(0).right(0).size(9).rounded(5)
           .border(2).border_color(t.chrome).bg(t[dot])))
-        .when(number !== undefined, (el) => el.child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
-          .text_size(8.5).font_bold().text_color(a.focused ? t.foreground : t.dim).child(String(number))))));
+        .child(div().absolute().bottom(-2).right(-2).px(2).rounded(3).bg(t.chrome)
+          .text_size(8.5).font_bold().text_color(a.focused ? t.foreground : t.dim).child(String(number)))));
   }
 
   // compact: a ! for blocked where a header already says "Needs you".
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
-    if (a.status === "unknown") return div().w(13).flex_none().text_center().text_color(t.dim)
-      .text_size(10).child("–");
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
     if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
     if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
@@ -519,98 +268,38 @@ export default class Agents extends View {
   render(cx) {
     const t = theme();
     if (props()?.sortMenu) return this.sortMenu(t);
-    if (props()?.agentDetails) return this.agentDetails(t, props().agentDetails);
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
-    const allPanes = panes();
-    const current = focused();
-    const { active: tmuxActive, found: detected } = this.detection(all, allPanes, list, current);
-    const selected = selectedDetectedAgent(detected, tmuxActive, current?.pane);
     this.migratePins(all);
-    const shown = current?.agent;
+    const shown = focused()?.agent;
     const now = Date.now();
     this.track(list, now);
-    const byPriority = sort.id === "priority";
-    const workspaces = spaces();
-    const tabs = new Map();
-    for (const space of workspaces) {
-      for (const tab of space.tabs) tabs.set(tab.id, { tab, space: space.id, name: space.name });
-    }
-    const contexts = new Map(allPanes.map(p => [p.pane, tabs.get(p.tab)]));
-    const leads = leadPanes(allPanes);
+    // A kept sub-agent (one with a pane) is in agents() too: where a tree shows
+    // it, it gets no row of its own, unless it's pinned.
+    const nested = new Set(collapsed ? [] : list.flatMap((a) => this.tree(all, a.address).map((s) => s.t.address)));
+    list = list.filter((a) => a.pinned || !nested.has(a.address));
     const tabCounts = new Map();
-    const trees = new Map();
-    const nested = new Set();
-    for (const agent of list) {
-      const children = this.tree(all, agent.address);
-      trees.set(agent.address, children);
-      if (!collapsed) for (const child of children) nested.add(child.t.address);
-    }
-    list = list.filter(a => a.pinned || !nested.has(a.address));
     for (const a of list) tabCounts.set(a.tab, (tabCounts.get(a.tab) ?? 0) + 1);
-    const native = list.map(a => {
-      const context = tabs.get(a.tab);
-      const many = tabCounts.get(a.tab) > 1;
-      const label = context ? title(many ? { ...context.tab, named: false } : context.tab, many ? a : leads.get(a.tab))
-        : a.title || a.program?.name || "";
-      const children = trees.get(a.address);
-      const rank = Math.max(this.rank(a), ...children.map(({ t }) => {
-        const status = kidStatus(t, this.listed);
-        return RANK[status === "done" ? "idle" : status] ?? 0;
-      }));
-      return {
-        address: a.address, rowId: "ag-" + a.address, reported: true,
-        group: a.space, groupName: a.space_name, spaceName: a.space_name,
-        title: label, detail: /^\d+$/.test(label) ? null : label,
-        status: a.status, since: this.since(a), rank: rank || RANK.idle, seq: a.seq,
-        program: a.program, focused: a.focused,
-        machine: a.address.includes("/") ? a.address.split("/")[0] : null,
-        pinned: a.pinned, pin: pinned => run("terminal.pin", { terminal: a.address, pinned }),
-        activate: () => { this.navigationPending = null; run("pane.focus", { pane: a.pane }); },
-        navigate: () => run("agent.focus", { terminal: a.address }),
-        children: collapsed ? [] : children,
-      };
-    });
-    const counts = new Map();
-    for (const a of native) {
-      const key = JSON.stringify([a.spaceName, a.detail]);
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    for (const a of native) {
-      if (a.detail == null && counts.get(JSON.stringify([a.spaceName, null])) > 1) a.detail = a.title;
-    }
-    const tmuxCanFocus = layoutHasMod(layout(), "spaces");
-    const discovered = detected.map(agent => this.detectedModel(agent, selected, contexts, tmuxCanFocus));
-    if (discovered.some(a => a.focused)) for (const a of native) {
-      if (a.address === (current?.shown ?? current?.terminal)) a.focused = false;
-    }
-    const combined = [...native, ...discovered];
-    if (byPriority) combined.sort((a, b) => b.rank - a.rank || (b.since ?? 0) - (a.since ?? 0) || (b.seq ?? 0) - (a.seq ?? 0));
-    const pinned = combined.filter(a => a.pinned);
-    const section = new Map();
-    for (const a of combined) {
-      if (a.pinned) continue;
-      const id = byPriority ? (a.rank === 0 ? "detected-agents" : "sec-" + a.rank) : "sp-" + a.group;
-      if (!section.has(id)) section.set(id, {
-        id, label: byPriority ? SECTION[a.rank] : a.groupName || "",
-        status: byPriority ? SECTION_STATUS[a.rank] : null, members: [],
-      });
-      section.get(id).members.push(a);
-    }
-    const groups = [...section.values()];
-    if (pinned.length) groups.unshift({ id: "pinned", label: "Pinned", status: null, members: pinned });
-    const ordered = groups.flatMap(g => g.members);
-    this.navigation = ordered.filter(a => a.navigate);
-    this.followFocus(this.navigation.find(a => a.focused)?.address ?? shown, now);
-    if (this.navigationPending) for (const a of ordered) a.focused = a.address === this.navigationPending.address;
-    // Read once: every host read copies the whole map or list.
-    const tints = collapsed ? { colors: shared("space.colors") ?? {}, spaceIds: new Set(spaces().map((s) => s.id)) } : null;
-    const navigationIndices = new Map(this.navigation.map((a, i) => [a.address, i + 1]));
-    setAgentOrder(ordered.filter(a => a.reported).map(a => a.address),
-      this.navigation.some(a => !a.reported) ? this.navigation.length : undefined);
+    const byPriority = sort.id === "priority";
+    // A helper's done is its own row's news: it doesn't pull a working parent out of Working.
+    const kidRank = (k) => { const s = kidStatus(k, this.listed); return RANK[s === "done" ? "idle" : s] ?? 0; };
+    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => kidRank(s.t)))]));
+    const rankOf = (a) => urgency.get(a.address);
+    if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
+    const pinned = list.filter((a) => a.pinned);
+    const rest = list.filter((a) => !a.pinned);
+    list = [...pinned, ...rest];
+    setAgentOrder(list.map((a) => a.address));
+
+    const withKids = (a, i) => {
+      const subs = collapsed ? [] : this.tree(all, a.address);
+      const r = row(a, i, subs);
+      if (this.folded.has(a.address)) return [r];
+      return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
+    };
 
     // The fold chevron; folded, the count too, colored by the most urgent one.
     const fold = (a, subs) => {
@@ -638,14 +327,36 @@ export default class Agents extends View {
         .when(!open, (el) => el.child(String(subs.length)));
     };
 
-    const row = (a) => {
-      const subs = a.children;
+    // A row reads "space \u00b7 detail": the detail is a tab someone named or the
+    // agent's own title, never an automatic tab number unless two rows would
+    // otherwise read the same.
+    // Read the pane snapshot once: every host read copies the whole list into JS.
+    const leads = leadPanes(panes());
+    const workspaces = spaces();
+    const tabs = new Map(workspaces.flatMap(s => s.tabs).map(tab => [tab.id, tab]));
+    // Read once: every host read copies the whole map or list.
+    const tints = collapsed ? { colors: shared("space.colors") ?? {}, spaceIds: new Set(workspaces.map((s) => s.id)) } : null;
+    const labels = new Map(list.map(a => {
+      const tab = tabs.get(a.tab);
+      const many = tabCounts.get(a.tab) > 1;
+      return [a.address, tab ? title(many ? { ...tab, named: false } : tab, many ? a : leads.get(a.tab)) : (a.title || a.program?.name || "")];
+    }));
+    const label = (a) => labels.get(a.address);
+    const detail = new Map(list.map(a => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
+    const seen = {};
+    for (const a of list) { const k = `${a.space_name}\u0000${detail.get(a.address) ?? ""}`; seen[k] = (seen[k] ?? 0) + 1; }
+    for (const a of list) {
+      if (detail.get(a.address) == null && seen[`${a.space_name}\u0000`] > 1) detail.set(a.address, label(a));
+    }
+
+    const row = (a, i, subs = []) => {
       const pic = icon(a.program, 16, t.foreground);
-      const more = a.detail;
-      const tooltip = [a.program?.name, a.spaceName, more, a.location, a.status === "unknown" ? "Status unavailable" : null].filter(Boolean).join(" · ");
-      if (collapsed) return this.railCell(t, a, pic, tooltip, navigationIndices.get(a.address), tints);
-      const when = a.since;
-      const muted = (a.status === "idle" || a.status === "unknown") && !a.focused;
+      const more = detail.get(a.address);
+      // An agent on another machine (`vps/t7`) says which.
+      const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
+      if (collapsed) return this.railCell(t, a, pic, [a.program?.name, a.space_name, more].filter(Boolean).join(" \u00b7 "), i + 1, tints);
+      const when = this.since(a);
+      const idle = a.status === "idle" && !a.focused;
       const isPinned = a.pinned;
       const pin = div()
         .id(`pin-${a.address}`)
@@ -658,7 +369,7 @@ export default class Agents extends View {
         .tooltip(isPinned ? "Unpin" : "Pin to the top")
         .on_click((_e, cx) => {
           cx.stop_propagation();
-          a.pin(!isPinned);
+          run("terminal.pin", { terminal: a.address, pinned: !isPinned });
           // The row moves away from under the pointer, and no hover-out comes.
           this.hovered = null;
           cx.notify();
@@ -667,9 +378,9 @@ export default class Agents extends View {
       // Under a space header the space goes without saying; an automatic tab number says nothing.
       // Without a space header above (priority, pinned) the row names its space.
       const full = byPriority || isPinned;
-      const name = full ? a.spaceName || a.title : more ?? (/^\d+$/.test(a.title) ? a.program?.name || a.title : a.title);
+      const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       return h_flex()
-        .id(a.rowId)
+        .id(`ag-${a.address}`)
         .px(8)
         .h(30)
         .flex_none()
@@ -684,8 +395,7 @@ export default class Agents extends View {
           else if (this.hovered === a.address) this.hovered = null;
           cx.notify();
         })
-        .on_click(a.activate)
-        .when(Boolean(tooltip), el => el.tooltip(tooltip))
+        .on_click(() => run("pane.focus", { pane: a.pane }))
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();
@@ -693,14 +403,24 @@ export default class Agents extends View {
             cx.notify();
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
-          .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(muted ? t.muted : t.foreground).child(name))
+          .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
-        .when(Boolean(a.machine), el => el.child(div().text_size(10).text_color(t.dim).child(a.machine)))
+        .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
-        .when(Boolean(a.pin) && this.hovered === a.address, el => el.child(pin))
+        .when(this.hovered === a.address, el => el.child(pin))
         .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
         .child(this.status(t, a, byPriority && !isPinned));
     };
+
+    // Groups in list order: spaces (grouped) or priority sections. Agents of a
+    // space are next to each other in agents(), so neighbours make a group.
+    const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
+    for (const a of rest) {
+      const r = rankOf(a) || RANK.idle;
+      const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
+      if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
+      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
+    }
 
     // A group's header; it folds the group. Folded, it says how many and the most urgent state.
     const header = (g) => {
@@ -717,7 +437,6 @@ export default class Agents extends View {
         .text_size(11)
         .font_medium()
         .cursor_pointer()
-        .when(!open && g.selected, el => el.bg(t.selected))
         .hover((s) => s.text_color(t.foreground))
         .on_click((_e, cx) => {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
@@ -730,25 +449,19 @@ export default class Agents extends View {
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
+    // Where the focused agent's row lands, so the list can keep it in view.
     let selectedAt = -1;
     const rows = [];
-    const add = (a) => {
+    const add = (a, i) => {
       if (a.focused) selectedAt = rows.length;
-      rows.push(row(a));
-      if (!this.folded.has(a.address)) rows.push(...a.children.map(child => this.subRow(t, child, shown, byPriority)));
+      rows.push(...withKids(a, i));
     };
-    if (collapsed) {
-      ordered.forEach(add); // no sub-agent rows on the rail: children is empty there
-    } else {
-      for (const group of groups) {
-        const folded = this.folded.has(group.id);
-        group.selected = group.members.some(a => a.focused);
-        if (group.selected && folded) selectedAt = rows.length;
-        rows.push(header(group));
-        if (!folded) group.members.forEach(add);
-      }
+    if (collapsed) list.forEach(add);
+    else for (const g of groups) {
+      rows.push(header(g));
+      if (!this.folded.has(g.id)) g.members.forEach(add);
     }
-    const selection = ordered.find(a => a.focused)?.address;
+    const selection = list.find((a) => a.focused)?.address;
     if (selection !== this.selectedAddress || selectedAt !== this.selectedAt) {
       this.selectedAddress = selection;
       this.selectedAt = selectedAt;
@@ -785,8 +498,8 @@ export default class Agents extends View {
             ),
         ),
       )
-      .when(list.length === 0 && detected.length === 0 && !collapsed, (el) =>
-        el.child(div().px(12).text_size(12).text_color(t.dim).child("No agents detected yet.")),
+      .when(list.length === 0 && !collapsed, (el) =>
+        el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).when(collapsed, (el) => el.pt(8)).overflow_y_scrollbar().mode("always").track_scroll(this.scroll).children(rows))
       .when(collapsed, (el) =>

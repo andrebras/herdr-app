@@ -178,11 +178,6 @@ the highlighted line shows where it will land.
   `agent.prev` and `agent.select {index}` (1 = first) use that order. Herdr
   keeps the last published order until the next call or app restart,
   skips agents that are gone, and appends unlisted agents in model order.
-  A mod that also lists rows Herdr does not track passes the row count as a
-  second argument, `setAgentOrder(addresses, count)`. While that copy is
-  shown, keys, clicks and mods' `agent.next`, `agent.prev` and
-  `agent.select` go to its `nextCommand()` as `next-agent`, `previous-agent`
-  and `select-agent-N`. `herdr-app do` keeps the published order.
 
 ## Layouts: `layouts/<name>.json`
 
@@ -484,8 +479,7 @@ Narrower than 160px, the sidebar mods draw a compact rail; folding resizes
 `space.select` number in a corner, its agents named in the tooltip); `agents`
 draws one cell per agent: its program's icon on its space's color, a spinning
 ring while it works, a dot when it needs you or is done, its agent number in a
-corner, details in the tooltip (idle agents a little dimmed, detected ones more).
-The tmux host space's chevron sits under its avatar. On macOS,
+corner, details in the tooltip (idle agents a little dimmed). On macOS,
 the tabs also leave room for the window buttons when the sidebar is narrower.
 
 ### Layouts and mods other people made
@@ -991,27 +985,6 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   `spaces` sidebar nests worktree spaces under their repo's and shows each
   space's repo, branch, ahead/behind and uncommitted changes). Shipped mods
   are Herdr's; duplicate with `mod.clone` before editing.
-
-- On macOS and Linux the Spaces sidebar groups existing sessions from the
-  local default tmux server under the Space hosting its client. With no
-  Herdr client yet, the sessions appear under a tmux heading. A click reuses
-  a tmux client in a Herdr pane or opens one. Selection follows that client's session. The terminal
-  icon beside Spaces creates a session in the current local folder. Use the
-  tab bar's `+` → Open folder to start an ordinary local shell in a chosen
-  folder. Windows and panes inside a tmux session are managed by tmux.
-  Closing the tmux tab preserves its Space as the host while that Space exists.
-  Selecting a session opens a new tab there if the client has detached.
-
-- The Agents sidebar on macOS and Linux lists recognised interactive local
-  agents under Detected when their status is unavailable. A row shows the tmux session,
-  window and pane position. After a tmux switch, selection follows the active
-  pane or the only agent in the active window or session. External rows open
-  process details and can reveal matching Terminal or iTerm2 tabs on macOS
-  when Automation is available. The footer counts agents reporting status.
-  A tmux pin follows the pane for the life of the server. The Agents palette
-  offers Next listed agent and Previous listed agent.
-  Tracked and detected agents use the same row controls. A dash in the status
-  slot denotes an agent that has not reported its status.
 
 ### Terminal link handlers
 
