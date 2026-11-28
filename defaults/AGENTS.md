@@ -484,7 +484,7 @@ Narrower than 160px, the sidebar mods draw a compact rail; folding resizes
 `space.select` number in a corner, its agents named in the tooltip); `agents`
 draws one cell per agent: its program's icon on its space's color, a spinning
 ring while it works, a dot when it needs you or is done, its agent number in a
-corner, details in the tooltip (idle agents a little dimmed, detected ones more).
+corner, details in the tooltip (idle agents a little dimmed).
 The tmux host space's chevron sits under its avatar. On macOS,
 the tabs also leave room for the window buttons when the sidebar is narrower.
 
@@ -999,17 +999,6 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   icon beside Spaces creates a session in the current local folder. Windows and panes inside a tmux session are managed by tmux.
   Closing the tmux tab preserves its Space as the host while that Space exists.
   Selecting a session opens a new tab there if the client has detached.
-
-- The Agents sidebar on macOS and Linux lists recognised interactive local
-  agents under Detected when their status is unavailable. A row shows the tmux session,
-  window and pane position. After a tmux switch, selection follows the active
-  pane or the only agent in the active window or session. External rows open
-  process details and can reveal matching Terminal or iTerm2 tabs on macOS
-  when Automation is available. The footer counts agents reporting status.
-  A tmux pin follows the pane for the life of the server. The Agents palette
-  offers Next listed agent and Previous listed agent.
-  Tracked and detected agents use the same row controls. A dash in the status
-  slot denotes an agent that has not reported its status.
 
 ### Terminal link handlers
 

@@ -37,10 +37,6 @@ for (const raw of ["{{{not json", "null", "42", '"old shape"', "{}"]) {
     expect(view.pendingPins).toEqual([]);
     expect(data.has("pins")).toBe(false);
   });
-  test(`agents recover invalid tmux pins: ${raw}`, async () => {
-    const { view } = await harness("agents", { "tmux.pins": raw });
-    expect([...view.tmuxPins]).toEqual([]);
-  });
   test(`spaces recover invalid folded machines: ${raw}`, async () => {
     const { view } = await harness("spaces", { "machines.folded": raw });
     expect([...view.folded]).toEqual(raw === '"old shape"' ? [...new Set("old shape")] : []);

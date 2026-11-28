@@ -248,12 +248,6 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                 "exec" if first == "/bin/sh" && a.get(1).map(from_host) == Some(json!(["-c", "command -v tmux"])) => {
                     Some(json!({"code":1,"stdout":"","stderr":""}))
                 }
-                "exec" if first == "ps" && a.get(1).map(from_host).and_then(|v| v.get(0).cloned()) == Some(json!("-xww")) => {
-                    Some(json!({"code":0,"stdout":"","stderr":""}))
-                }
-                "exec" if first == "tmux" && a.get(1).map(from_host).and_then(|v| v.get(3).cloned()) == Some(json!("list-panes")) => {
-                    Some(json!({"code":1,"stdout":"","stderr":"no server running"}))
-                }
                 // The files panel lists a folder with sh: kind and name pairs.
                 "exec" if first == "sh" && a.get(1).map(from_host).and_then(|v| v.get(2).cloned()) == Some(json!("files")) => {
                     Some(json!({"code":0,"stdout":"d\u{0}src\u{0}f\u{0}README.md\u{0}","stderr":""}))
