@@ -178,11 +178,6 @@ the highlighted line shows where it will land.
   `agent.prev` and `agent.select {index}` (1 = first) use that order. Herdr
   keeps the last published order until the next call or app restart,
   skips agents that are gone, and appends unlisted agents in model order.
-  A mod that also lists rows Herdr does not track passes the row count as a
-  second argument, `setAgentOrder(addresses, count)`. While that copy is
-  shown, keys, clicks and mods' `agent.next`, `agent.prev` and
-  `agent.select` go to its `nextCommand()` as `next-agent`, `previous-agent`
-  and `select-agent-N`. `herdr-app do` keeps the published order.
 
 ## Layouts: `layouts/<name>.json`
 
