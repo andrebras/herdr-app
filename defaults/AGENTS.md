@@ -996,9 +996,7 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   local default tmux server under the Space hosting its client. With no
   Herdr client yet, the sessions appear under a tmux heading. A click reuses
   a tmux client in a Herdr pane or opens one. Selection follows that client's session. The terminal
-  icon beside Spaces creates a session in the current local folder. Use the
-  tab bar's `+` → Open folder to start an ordinary local shell in a chosen
-  folder. Windows and panes inside a tmux session are managed by tmux.
+  icon beside Spaces creates a session in the current local folder. Windows and panes inside a tmux session are managed by tmux.
   Closing the tmux tab preserves its Space as the host while that Space exists.
   Selecting a session opens a new tab there if the client has detached.
 
