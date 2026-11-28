@@ -484,8 +484,7 @@ Narrower than 160px, the sidebar mods draw a compact rail; folding resizes
 `space.select` number in a corner, its agents named in the tooltip); `agents`
 draws one cell per agent: its program's icon on its space's color, a spinning
 ring while it works, a dot when it needs you or is done, its agent number in a
-corner, details in the tooltip (idle agents a little dimmed).
-The tmux host space's chevron sits under its avatar. On macOS,
+corner, details in the tooltip (idle agents a little dimmed). On macOS,
 the tabs also leave room for the window buttons when the sidebar is narrower.
 
 ### Layouts and mods other people made
@@ -991,14 +990,6 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   `spaces` sidebar nests worktree spaces under their repo's and shows each
   space's repo, branch, ahead/behind and uncommitted changes). Shipped mods
   are Herdr's; duplicate with `mod.clone` before editing.
-
-- On macOS and Linux the Spaces sidebar groups existing sessions from the
-  local default tmux server under the Space hosting its client. With no
-  Herdr client yet, the sessions appear under a tmux heading. A click reuses
-  a tmux client in a Herdr pane or opens one. Selection follows that client's session. The terminal
-  icon beside Spaces creates a session in the current local folder. Windows and panes inside a tmux session are managed by tmux.
-  Closing the tmux tab preserves its Space as the host while that Space exists.
-  Selecting a session opens a new tab there if the client has detached.
 
 ### Terminal link handlers
 
